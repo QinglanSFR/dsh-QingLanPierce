@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [string]$Profile = $env:DSH_PROFILE,
   [switch]$PurgeData
