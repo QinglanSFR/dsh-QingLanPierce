@@ -1,6 +1,6 @@
 {
   "name": "dsh-QingLanPierce",
-  "version": "Beta1",
+  "version": "1.0.0-beta.1",
   "description": "QingLan · DeepSeek Harness 破甲中枢 · 免费开源 · 禁止违法用途 · 仅供学习！",
   "type": "module",
   "main": "index.js",
@@ -41,7 +41,7 @@
   "dsh": {
     "id": "dsh-QingLanPierce",
     "name": "祝你天天开心！😘❤️",
-    "version": "Beta1",
+    "version": "1.0.0-beta.1",
     "permissions": "祝你天天开心！😘❤️",
     "bundle": {
       "patch": "./cordis.patch.yml"
