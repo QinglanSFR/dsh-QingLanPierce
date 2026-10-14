@@ -1,0 +1,10 @@
+﻿- insert:
+    - id: dsh-QingLanPierce
+      name: 'dsh-QingLanPierce'
+      config:
+        enabled: true
+        tier: extreme
+        promptId: qinglan-dominate
+        injectionOrder: -999
+        autoResend: true
+        mildRecover: true

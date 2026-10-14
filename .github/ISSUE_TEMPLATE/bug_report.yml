@@ -1,0 +1,98 @@
+name: 缺陷报告（Bug report）
+description: 插件行为不符合预期时使用（请先读 SECURITY.md 与 CONTRIBUTING.md）
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请确认三件事：
+        1. 你已阅读 `SECURITY.md`（安全类问题请走私密报告通道，不要发在这里）；
+        2. 你已阅读 `CONTRIBUTING.md`（本项目的使用限制与不接受范围）；
+        3. 你用的是本仓库的当前版本，且没有自行修改过代码或协议文本。
+
+        另外提醒：**模型拒绝回答不是本插件的缺陷**，与项目无关；请不要就此提交 Issue。
+
+  - type: input
+    id: version
+    attributes:
+      label: 插件版本
+      description: 菜单「关于」页显示的名义版本号
+      placeholder: 例如 Beta1
+    validations:
+      required: true
+
+  - type: input
+    id: host
+    attributes:
+      label: 宿主环境
+      description: DeepSeek Harness 的版本与运行形态、操作系统
+      placeholder: 例如 DSH 0.2.0-rc.2 桌面版 / Windows 11
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 实际行为
+      description: 发生了什么（只贴必要的最小片段，注意打码个人与第三方信息）
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+      description: 你认为应该发生什么
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从启动开始的最小步骤，能重复触发即可
+      placeholder: |
+        1. 启动 DeepSeek Harness
+        2. 接受免责协议
+        3. 打开菜单 → 对抗
+        4. ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 涉及区域
+      options:
+        - 免责协议遮罩 / 协议门
+        - 状态条 / 浮动菜单界面
+        - 档位与注入位置
+        - 转写与任务信封（指称记法）
+        - 输出侧对抗（拒绝话术扫描 / 自动补发）
+        - 安装 / 卸载
+        - 提示词正文
+        - 其它
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 证据（可选）
+      description: 截图、状态页里的关键几行、或菜单「对抗」页的转写自检结果
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 确认
+      options:
+        - label: 我已阅读 SECURITY.md 与 CONTRIBUTING.md，并理解本项目的使用限制
+          required: true
+        - label: 我使用的是本仓库当前版本，未自行修改代码或协议文本
+          required: true
+        - label: 我已删除或打码了截图/日志中的个人与他人信息
+          required: true

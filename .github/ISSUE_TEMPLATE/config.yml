@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全问题（私密报告）
+    url: https://github.com/QinglanSFR/dsh-QingLanPierce/security/advisories/new
+    about: 请不要在公开 Issue 里贴可被直接利用的细节；安全问题请走私密通道，见 SECURITY.md
+  - name: 使用限制与责任声明
+    url: https://github.com/QinglanSFR/dsh-QingLanPierce/blob/main/README.md
+    about: 提交前请先阅读 README 首屏声明、LICENSE 与 legal/DISCLAIMER.txt

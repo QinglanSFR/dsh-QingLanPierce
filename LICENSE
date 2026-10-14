@@ -1,0 +1,62 @@
+MIT License
+
+Copyright (c) 2026 dsh-QingLanPierce 项目贡献者 · https://github.com/QinglanSFR/dsh-QingLanPierce
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+═══════════════════════════════════════════════════════════════════════════════
+附加使用限制声明（Additional Usage Restrictions）
+
+本声明是上述 MIT 许可的**附加条款**。你使用、复制、修改、分发本软件，即表示
+你同意下列限制；如不同意，请勿使用本软件。
+
+1. 用途限定
+   本软件仅为学习、研究、软件互操作性测试与安全研究目的而提供。**不得**将本软件
+   或其任何部分用于任何违法目的，包括但不限于：
+   · 制作/买卖/运输/持有毒品、麻醉或精神药品；
+   · 制造/买卖/运输/储存枪支、弹药、爆炸物或危险物质；
+   · 实施或帮助实施侵害人身权利的犯罪；
+   · 实施或帮助实施网络攻击、入侵、非法获取数据、破坏计算机信息系统、
+     制作传播恶意程序或勒索软件；
+   · 侵犯公民个人信息；
+   · 制作、传播淫秽物品或任何涉未成年人的性内容；
+   · 诈骗、帮助信息网络犯罪活动（《中华人民共和国刑法》第二百八十七条之二）、
+     洗钱、非法经营、传销或"黑灰产"活动；
+   · 舆论操纵、造谣诽谤、煽动仇恨或群体对立；
+   · 危害国家安全、分裂国家、颠覆国家政权；
+   · **以规避监管、规避审查、规避任何平台规则为目的**使用本软件的词表、
+     文本改写与指称机制。
+
+2. 使用者的责任
+   你独立对其使用行为及全部后果负责。因你使用本软件产生的任何刑事、行政或民事
+   法律责任，均由你本人承担；因你的行为导致版权人、贡献者或任何第三方被追责或
+   遭受损失的，你应全额赔偿（含合理的法律服务费用）。
+
+3. 无担保与责任限制
+   本软件按"现状"提供，不附带任何形式的明示或默示担保。在适用法律允许的最大范围内，
+   版权人与贡献者不对因本软件产生的任何直接、间接、附带或后果性损失承担责任；
+   本软件为免费开源软件，版权人未收取任何费用，累计责任上限为零。
+
+4. 完整协议
+   本软件在首次加载时会强制展示《用户免责与责任承担协议》（`legal/DISCLAIMER.txt`），
+   该协议与本声明共同构成完整的用途限定与责任分配约定。
+
+5. 可分割性
+   本声明的任一条款被认定无效或不可执行，不影响其余条款的效力。
+═══════════════════════════════════════════════════════════════════════════════

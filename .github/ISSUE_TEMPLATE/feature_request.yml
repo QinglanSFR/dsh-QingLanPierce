@@ -1,0 +1,67 @@
+name: 功能请求（Feature request）
+description: 想要新增或改进某项能力时使用（请先阅读 CONTRIBUTING.md 的范围说明）
+title: "[feat] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先确认：你请求的能力落在本项目范围内（插件行为、界面、协议、词表与转写机制、安装体验）。
+
+        会被直接关闭的请求：
+        - 以规避法律、监管或平台规则为目标的能力；
+        - 恢复「检测/停用其它插件」这类跨插件干预行为；
+        - 要求把会话内容或使用数据上传到本机之外；
+        - 让插件自动绕过自身免责协议门禁。
+
+  - type: input
+    id: version
+    attributes:
+      label: 你当前使用的版本
+      placeholder: 例如 Beta1
+    validations:
+      required: true
+
+  - type: textarea
+    id: need
+    attributes:
+      label: 你想解决什么
+      description: 描述你遇到的真实场景，而不是先给方案
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 你希望的形态（可选）
+      description: 如果已经想好怎么做，写在这里
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 涉及区域
+      options:
+        - 免责协议遮罩 / 协议门
+        - 状态条 / 浮动菜单界面
+        - 档位与注入位置
+        - 转写与任务信封（指称记法）
+        - 输出侧对抗（拒绝话术扫描 / 自动补发）
+        - 安装 / 卸载
+        - 提示词正文
+        - 文档 / 仓库
+        - 其它
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 确认
+      options:
+        - label: 我已阅读 CONTRIBUTING.md，并确认该请求不属于会被拒绝的范围
+          required: true
+        - label: 我理解本插件不检测也不改动任何其它插件
+          required: true
