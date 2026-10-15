@@ -40,7 +40,7 @@ import {
   resendFrameAt,
   vocabStats,
 } from "./lib/core.js";
-import { ENVELOPE_CLASSES, NOTATION_MODES, NOTATION_POLICY, notationTable } from "./lib/lexicon.js";
+import { ENVELOPE_CLASSES, NOTATION_MODES, NOTATION_POLICY, notationTable, renderWord } from "./lib/lexicon.js";
 import { LEGAL_FILE, loadLegal } from "./lib/legal.js";
 export const name = PLUGIN_ID;
 
@@ -395,6 +395,7 @@ function legalAcceptedNow() {
 }
 
 const LEGAL_PENDING_SECTION = "[QingLan · 待确认免责协议]";
+const ENVELOPE_MARK = "【任务信封】";
 
 function buildSectionText() {
   const cfg = runtime.config;
@@ -1324,6 +1325,7 @@ function bindEventFor(ctx) {
 }
 
 const ESCAPE_MEMO = { key: "", map: null, at: 0 };
+const RENDERED_MEMO = { key: "", forms: new Set() };
 
 function escapeMapFor(config) {
   const key = JSON.stringify(config?.triggerMap || {});
@@ -1332,6 +1334,28 @@ function escapeMapFor(config) {
   ESCAPE_MEMO.map = buildTriggerMap(config?.triggerMap);
   ESCAPE_MEMO.at = Date.now();
   return ESCAPE_MEMO.map;
+}
+
+function isAlreadyConverted(text, map, notation) {
+  const input = String(text || "");
+  if (!input) return false;
+  if (input.includes(ENVELOPE_MARK)) return true;
+  if (!map || typeof map !== "object") return false;
+  const memoKey = `${notation}|${Object.keys(map).length}`;
+  if (RENDERED_MEMO.key !== memoKey) {
+    const forms = new Set();
+    for (const key of Object.keys(map)) {
+      const rendered = renderWord(key, notation);
+      if (rendered && rendered !== key) forms.add(rendered);
+    }
+    RENDERED_MEMO.key = memoKey;
+    RENDERED_MEMO.forms = forms;
+  }
+  if (RENDERED_MEMO.forms.size === 0) return false;
+  for (const form of RENDERED_MEMO.forms) {
+    if (input.includes(form)) return true;
+  }
+  return false;
 }
 
 function makeEscapePlanner() {
@@ -1377,6 +1401,17 @@ function makeEscapePlanner() {
     const map = escapeMapFor(cfg);
     plan.terms = Object.keys(map).length;
     plan.notation = resolveNotation(cfg);
+    if (isAlreadyConverted(raw, map, plan.notation)) {
+      plan.hits = [];
+      plan.matched = [];
+      plan.escaped = raw;
+      plan.categories = [];
+      plan.envelopeKind = "";
+      plan.envelope = "";
+      plan.needsRewrite = false;
+      plan.decision = "already-converted";
+      return plan;
+    }
     const escaped = escapeText(raw, map, { notation: plan.notation });
     plan.hits = escaped.hits;
     plan.matched = escaped.hits.map((hit) => String(hit).split("→")[0]);
@@ -1548,6 +1583,7 @@ function installEngagementListener(ctx) {
     const build = (rawText) => {
 
       if (String(rawText).includes(LEGAL_TEXT_MARKER)) return rawText;
+      if (isAlreadyConverted(rawText, map, notation)) return rawText;
       const escaped = escapeText(rawText, map, { notation });
       if (escaped.hits.length === 0) return escaped.text;
       if (runtime.config.taskEnvelope === false) return escaped.text;
