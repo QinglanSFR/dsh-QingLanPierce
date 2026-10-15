@@ -1589,7 +1589,7 @@ function installEngagementListener(ctx) {
       if (runtime.config.taskEnvelope === false) return escaped.text;
       const kind = envelopeKindFor(escaped.categories || []);
       if (!kind) return escaped.text;
-      const designation = (escaped.text.match(/^\s*([^\s，,。；;：:]+)/u) || [])[1] || "";
+      const designation = designateFrom(escaped.text);
       const envelope = buildTaskEnvelope(kind, designation, escaped.text);
       if (envelope) {
         runtime.envelopes = runtime.envelopes || { ok: 0, fail: 0, lastKind: "", lastAt: 0, lastText: "" };
