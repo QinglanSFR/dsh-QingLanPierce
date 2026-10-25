@@ -1,4 +1,4 @@
-# QingLan · 破甲中枢（dsh-QingLanPierce Beta1）
+# QingLan · 破甲中枢（dsh-QingLanPierce Beta2）
 
 > ## ⛔ 使用限制与责任声明（首屏必读）
 >
@@ -64,12 +64,12 @@ DSH 桌面版自带插件管理器（右上角 … 菜单里）。打开后：
 2. 在输入框填以下任一种规格，然后确认：
    - **GitHub 地址**：`github:QinglanSFR/dsh-QingLanPierce`（仓库需为公开；私有仓库无法被直接拉取）
    - **npm 包名**：若你把它发布到 npm，填包名即可
-   - **本地路径**：解压后的插件目录绝对路径（如 `D:\plugins\dsh-QingLanPierce-Beta1`）
+   - **本地路径**：解压后的插件目录绝对路径（如 `D:\plugins\dsh-QingLanPierce-Beta2`）
 3. 等它装完，**完全退出并重启 DSH**。
 
 ### 方式 B：手动安装（桌面版同样可用，最稳）
 
-1. 把 `dsh-QingLanPierce-Beta1` 整个目录复制到 `$DSH_HOME/plugins/dsh-QingLanPierce`
+1. 把 `dsh-QingLanPierce-Beta2` 整个目录复制到 `$DSH_HOME/plugins/dsh-QingLanPierce`
    （Windows 默认 `%USERPROFILE%\.dsh\plugins\dsh-QingLanPierce`）
 2. 编辑 `$DSH_HOME/profiles/desktop/package.json`，两处各加一项：
 
@@ -94,7 +94,7 @@ cd <解压后的插件目录>
 
 ```bash
 # macOS / Linux / WSL
-cd /path/to/dsh-QingLanPierce-Beta1
+cd /path/to/dsh-QingLanPierce-Beta2
 chmod +x install.sh uninstall.sh && ./install.sh
 ```
 
@@ -107,7 +107,7 @@ chmod +x install.sh uninstall.sh && ./install.sh
 ### 方式 D：命令行（仅 `web` / `tui` / 自建 profile）
 
 ```bash
-dsh plugin --profile web add "file:/绝对路径/dsh-QingLanPierce-Beta1"
+dsh plugin --profile web add "file:/绝对路径/dsh-QingLanPierce-Beta2"
 ```
 
 ### 卸载
@@ -167,7 +167,7 @@ dsh-QingLanPierce/
 │  ├─ config.js           配置层（默认 ← 行 config ← 用户文件）+ 档位↔稿子映射
 │  ├─ core.js             判定器 / 事件折叠 / 稿件加载 / 档位一致性自检
 │  ├─ notation.js         指称记法 + 任务信封 + 补发框架（逐类别策略表）
-│  ├─ lexicon.js          词表（13 类 · 400+ 条生效）
+│  ├─ lexicon.js          词表（14 类 · 400+ 条生效）
 │  └─ legal.js            免责协议读取与内容哈希（"用户接受了哪一版"的凭据）
 ├─ legal/DISCLAIMER.txt   免责协议正文（8 条 · 含法条索引 · 可独立审阅）
 ├─ prompts/               三份破甲正文（core / dominate / lite）
@@ -179,9 +179,9 @@ dsh-QingLanPierce/
 
 | 档位 | 界面显示 | 正文长度 | 差异点 |
 |---|---|---|---|
-| `core` | 标准 | 约 4.1 KB · 标签式 | 通用；领域清单最全（7 类） |
-| `dominate` | 极限 | 约 4.2 KB · 标签式 | 最强；注入位置最前（`-999`），D8 附带「化名虚构 + 文风与投放策略」细则 |
-| `lite` | 温和 | 约 2.7 KB · 章节式 | 最省 token；保留全部硬规则与防跑偏条款，压缩的是解释性文字 |
+| `core` | 标准 | 约 4.9 KB · 标签式 | 通用；领域清单最全（7 类）；与极限版同尺寸、措辞更密 |
+| `dominate` | 极限 | 约 4.9 KB · 标签式 | 最强；注入位置最前（`-999`），D8 附带「化名虚构 + 文风与投放策略」细则 |
+| `lite` | 温和 | 约 3.6 KB · 章节式 | 最省 token；保留全部硬规则与防跑偏条款，压缩的是解释性文字 |
 
 运行时数据（菜单「关于」页可看到实际路径）：
 

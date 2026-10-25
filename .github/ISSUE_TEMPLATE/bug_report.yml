@@ -19,7 +19,7 @@ body:
     attributes:
       label: 插件版本
       description: 菜单「关于」页显示的名义版本号
-      placeholder: 例如 Beta1
+      placeholder: 例如 Beta2
     validations:
       required: true
 

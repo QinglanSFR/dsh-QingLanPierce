@@ -525,7 +525,6 @@ function buildStatus() {
     tierMismatch: promptTierProblems(cfg, runtime.prompts).length > 0,
     tierProblems: promptTierProblems(cfg, runtime.prompts),
 
-    sectionCharsForTier: { lite: 2119, standard: 4895, extreme: 5653 }[cfg.tier] ?? null,
     injectionOrder: cfg.injectionOrder,
     sectionChars: section.length,
     sectionFingerprint: runtime.sectionFingerprint,
@@ -533,7 +532,7 @@ function buildStatus() {
     sectionTail: section.slice(-160),
     checks,
     recentBlocked: blocked,
-    model: runtime.statusCtx ? readModelSelection(runtime.statusCtx) : null,
+    model: runtime.statusCtx ? statusModelSelection(runtime.statusCtx) : null,
     escape: {
       enabled: cfg.triggerEscape !== false,
       note: cfg.triggerEscapeNote !== false,
@@ -989,6 +988,16 @@ function readModelSelection(ctx) {
   } catch {
     return null;
   }
+}
+
+function statusModelSelection(ctx) {
+  const selection = readModelSelection(ctx);
+  if (!selection) return null;
+  return {
+    provider: selection.provider,
+    model: selection.model,
+    profileReasoningEffort: selection.reasoningEffort,
+  };
 }
 
 async function applyModelSelection(ctx, patch) {
