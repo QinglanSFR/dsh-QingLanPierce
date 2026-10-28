@@ -19,7 +19,7 @@ body:
     id: version
     attributes:
       label: 你当前使用的版本
-      placeholder: 例如 Beta2
+      placeholder: 例如 Beta3
     validations:
       required: true
 
