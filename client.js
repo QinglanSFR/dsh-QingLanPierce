@@ -615,7 +615,9 @@ window.__ModuleLoader__.load({
       if (shield.enabled === false) return PALETTE.off;
       if (shield.running) return PALETTE.running;
       if (shield.verdict === "pass" || shield.verdict === "defense") return PALETTE.pass;
-      if (shield.verdict === "refusal" || shield.verdict === "fallback") return PALETTE.blocked;
+      if (shield.verdict === "refusal" || shield.verdict === "fallback" || shield.verdict === "stall") {
+        return PALETTE.blocked;
+      }
       return PALETTE.idle;
     }
 
@@ -636,6 +638,7 @@ window.__ModuleLoader__.load({
       var passText = cfg.badgePassText || "数据没有发生变化，你小子防封可以";
       var failText = cfg.badgeFailText || "我被模型Hook了";
       var reframeText = cfg.badgeReframeText || "它想给你替代方案，正在替你转写";
+      var stallText = cfg.badgeStallText || "它在问你参数，正在替你续写";
       var running = !!(shield && shield.running);
       var verdict = shield && shield.verdict;
       var flashKey = "";
@@ -652,6 +655,9 @@ window.__ModuleLoader__.load({
           text = passText;
           flashKey = "pass";
         }
+      } else if (verdict === "stall") {
+        text = stallText;
+        flashKey = "blocked";
       } else if (verdict === "refusal" || verdict === "fallback") {
         text = failText + (shield && shield.words && shield.words[0] ? " · " + shield.words[0] : "");
         flashKey = "blocked";
