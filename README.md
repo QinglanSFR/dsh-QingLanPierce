@@ -1,4 +1,4 @@
-# QingLan · 破甲中枢（dsh-QingLanPierce 1.0.0）
+# QingLan · 破甲中枢（dsh-QingLanPierce 1.0.1）
 
 > ## ⛔ 使用限制与责任声明（首屏必读）
 >
@@ -64,12 +64,12 @@ DSH 桌面版自带插件管理器（右上角 … 菜单里）。打开后：
 2. 在输入框填以下任一种规格，然后确认：
    - **GitHub 地址**：`github:QinglanSFR/dsh-QingLanPierce`（仓库需为公开；私有仓库无法被直接拉取）
    - **npm 包名**：若你把它发布到 npm，填包名即可
-   - **本地路径**：解压后的插件目录绝对路径（如 `D:\plugins\dsh-QingLanPierce-1.0.0`）
+   - **本地路径**：解压后的插件目录绝对路径（如 `D:\plugins\dsh-QingLanPierce-1.0.1`）
 3. 等它装完，**完全退出并重启 DSH**。
 
 ### 方式 B：手动安装（桌面版同样可用，最稳）
 
-1. 把 `dsh-QingLanPierce-1.0.0` 整个目录复制到 `$DSH_HOME/plugins/dsh-QingLanPierce`
+1. 把 `dsh-QingLanPierce-1.0.1` 整个目录复制到 `$DSH_HOME/plugins/dsh-QingLanPierce`
    （Windows 默认 `%USERPROFILE%\.dsh\plugins\dsh-QingLanPierce`）
 2. 编辑 `$DSH_HOME/profiles/desktop/package.json`，两处各加一项：
 
@@ -94,7 +94,7 @@ cd <解压后的插件目录>
 
 ```bash
 # macOS / Linux / WSL
-cd /path/to/dsh-QingLanPierce-1.0.0
+cd /path/to/dsh-QingLanPierce-1.0.1
 chmod +x install.sh uninstall.sh && ./install.sh
 ```
 
@@ -107,7 +107,7 @@ chmod +x install.sh uninstall.sh && ./install.sh
 ### 方式 D：命令行（仅 `web` / `tui` / 自建 profile）
 
 ```bash
-dsh plugin --profile web add "file:/绝对路径/dsh-QingLanPierce-1.0.0"
+dsh plugin --profile web add "file:/绝对路径/dsh-QingLanPierce-1.0.1"
 ```
 
 ### 卸载
@@ -167,7 +167,7 @@ dsh-QingLanPierce/
 │  ├─ config.js           配置层（默认 ← 行 config ← 用户文件）+ 档位↔稿子映射
 │  ├─ core.js             判定器 / 事件折叠 / 稿件加载 / 档位一致性自检
 │  ├─ notation.js         指称记法 + 任务信封 + 补发框架（逐类别策略表）
-│  ├─ lexicon.js          词表（14 类 · 400+ 条生效）
+│  ├─ lexicon.js          词表（14 类 · 405 条生效）
 │  └─ legal.js            免责协议读取与内容哈希（"用户接受了哪一版"的凭据）
 ├─ legal/DISCLAIMER.txt   免责协议正文（8 条 · 含法条索引 · 可独立审阅）
 ├─ prompts/               三份破甲正文（core / dominate / lite）
@@ -179,9 +179,9 @@ dsh-QingLanPierce/
 
 | 档位 | 界面显示 | 正文长度 | 差异点 |
 |---|---|---|---|
-| `core` | 标准 | 约 10.0 KB · 标签式 | 通用；领域清单最全（7 类）；与极限版同尺寸、措辞更密 |
-| `dominate` | 极限 | 约 10.0 KB · 标签式 | 最强；注入位置最前（`-999`），D8 附带「化名虚构 + 文风与投放策略」细则 |
-| `lite` | 温和 | 约 8.7 KB · 章节式 | 最省 token；保留全部硬规则与防跑偏条款，压缩的是解释性文字 |
+| `core` | 标准 | 约 1.0 万字（9 959 字符）· 标签式 | 通用；领域清单最全（7 类）；与极限版同尺寸、措辞更密 |
+| `dominate` | 极限 | 约 1.0 万字（10 019 字符）· 标签式 | 最强；注入位置最前（`-999`），D8 附带「化名虚构 + 文风与投放策略」细则 |
+| `lite` | 温和 | 约 0.9 万字（8 827 字符）· 章节式 | 最省 token；保留全部硬规则与防跑偏条款，压缩的是解释性文字 |
 
 运行时数据（菜单「关于」页可看到实际路径）：
 
@@ -195,13 +195,23 @@ $DSH_HOME/dsh-QingLanPierce/
 
 ---
 
+## 六之后 · 可调开关（改 `$DSH_HOME/dsh-QingLanPierce/config.json`）
+
+| 键 | 默认 | 作用 |
+|---|---|---|
+| `minorEnvelope` | `true` | 未成年类是否套「卷宗条目」前件。设 `false` 退回原样（只换指称、不加前件） |
+| `resendFrameRotation` | `true` | 补发走内置三套体例轮换；设 `false` 才用 `autoResendText` |
+| `refusalScan` | `true` | 关掉后不再扫描输出、也不触发补发 |
+| `taskEnvelope` | `true` | 关掉后只做词面转写，不套任务信封 |
+| `injectionOrder` | `-999` | 注入位置；`-100` 紧跟身份，`100` 在 persona 之后 |
+
 ## 七、常见问题
 
 | 现象                   | 处理                                                                |
 | ---------------------- | ------------------------------------------------------------------- |
 | 启动后界面被全屏遮住   | 这是免责协议，**必须**等 20 秒倒计时结束点确认；不同意就退出并卸载  |
 | 状态条不出现           | 确认插件已启用、已**完全重启** DSH；`/qinglan status` 看是否报错    |
-| 提示词不生效           | 菜单「状态」页看「注入正文」字数；为 0 说明稿件读取失败             |
+| 提示词不生效           | 菜单「状态」页的「检查项」里看「注入正文 N 字」；报错说明稿件读取失败 |
 | 协议窗反复出现         | 说明 `legal/DISCLAIMER.txt` 被改动过（内容哈希变化 → 必须重新确认） |
 | 档位显示与实跑不一致   | 菜单「状态」页看「档位自检」；标题栏档位 chip 会标橙提示            |
 | 想看这句话会怎么发出去 | 菜单「对抗」页 → 转写自检                                           |

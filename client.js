@@ -278,7 +278,6 @@ window.__ModuleLoader__.load({
       injectionOrder: 1,
       sectionChars: 1,
       sectionFingerprint: 1,
-      sectionHead: 1,
       sectionTail: 1,
       checks: 1,
       recentBlocked: 1,
@@ -518,10 +517,6 @@ window.__ModuleLoader__.load({
       cfgSchedule({ items: patch || {} });
     }
 
-    function cfgApplyText(payload) {
-      cfgSchedule({ items: {}, id: payload && payload.id, text: (payload && payload.text) || "" });
-    }
-
     function cfgApplyLater(patch, delay) {
       if (cfgStore.itemTimer) window.clearTimeout(cfgStore.itemTimer);
       cfgStore.itemTimer = window.setTimeout(function () {
@@ -575,7 +570,6 @@ window.__ModuleLoader__.load({
       return {
         value: pair[0] || {},
         apply: cfgApply,
-        applyText: cfgApplyText,
         applyLater: cfgApplyLater,
         refresh: cfgRefresh,
         state: cfgStore,
@@ -780,7 +774,6 @@ window.__ModuleLoader__.load({
             ["当前档位", String(status.tier) + (status.promptId ? " · 稿 " + status.promptId + (status.promptLabel ? "（" + status.promptLabel + "）" : "") : "")],
             ["档位自检", status.tierMismatch === true ? "显示与实跑不一致" : "档位与稿子一致"],
             ["注入位置", status.injectionOrder],
-            ["注入正文", status.sectionChars + " 字"],
             ["稿指纹", status.sectionFingerprint],
             [
               "指称记法",
@@ -840,14 +833,6 @@ window.__ModuleLoader__.load({
                   item.text,
                 );
               }),
-            )
-          : null,
-        status && status.sectionHead
-          ? h(
-              "div",
-              { className: "ql-sec" },
-              h("h4", null, "注入正文"),
-              h("div", { className: "ql-mute", style: { whiteSpace: "pre-wrap", fontFamily: "ui-monospace,Consolas,monospace" } }, status.sectionHead),
             )
           : null,
         h(
@@ -1086,40 +1071,6 @@ window.__ModuleLoader__.load({
     function PromptTab(props) {
       var status = props.status;
       var cfg = props.cfg;
-      var textPair = React.useState("");
-      var text = textPair[0];
-      var setText = textPair[1];
-      var idPair = React.useState(cfg.promptId || "qinglan-core");
-      var id = idPair[0];
-      var setId = idPair[1];
-      var notePair = React.useState("");
-      var note = notePair[0];
-      var setNote = notePair[1];
-      var applyCfg = props.apply || function (patch) { apiCall("config", { patch: patch }); };
-      var applyText = props.applyText || function () {
-        setNote("本实例暂不支持文本写入，请用 /qinglan reload 后再试。");
-      };
-
-      React.useEffect(
-        function () {
-          if (!props.active) return;
-          fetch(API, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ action: "prompt", id: cfg.promptId || "qinglan-core" }),
-          })
-            .then(function (res) { return res.json(); })
-            .then(function (json) {
-              if (json && typeof json.text === "string") setText(json.text);
-              setNote("已载入当前生效稿（" + (json && json.length ? json.length : 0) + " 字），可直接改。");
-            })
-            .catch(function (error) {
-              setNote("载入失败：" + String((error && error.message) || error));
-            });
-        },
-        [props.active],
-      );
-
       return h(
         "div",
         null,
@@ -1130,40 +1081,6 @@ window.__ModuleLoader__.load({
           h(Row, { k: "稿 ID", v: cfg.promptId || "qinglan-core" }),
           h(Row, { k: "字符数", v: status ? status.sectionChars : "—" }),
           h(Row, { k: "指纹", v: status ? status.sectionFingerprint : "—" }),
-          note ? h("div", { className: "ql-mute", style: { marginTop: "6px" } }, note) : null,
-        ),
-        h(
-          "div",
-          { className: "ql-sec" },
-          h("h4", null, "编辑 / 换措辞"),
-          h("input", {
-            className: "ql-field",
-            value: id,
-            onChange: function (event) { setId(event.currentTarget.value); },
-            style: { marginBottom: "8px" },
-            placeholder: "稿 ID（写入同名文件会覆盖用户稿，原文件自动备份）",
-          }),
-          h("textarea", {
-            className: "ql-area",
-            value: text,
-            onChange: function (event) { setText(event.currentTarget.value); },
-            placeholder: "把新的破甲正文粘贴到这里；点「写入并启用」后下一条消息生效。",
-          }),
-          h(
-            "div",
-            { className: "ql-ops" },
-            h("button", {
-              className: "ql-btn primary",
-              onClick: function () {
-                applyText({ id: id, text: text });
-                setNote("已提交写入队列：正文 " + String(text || "").length + " 字 → 稿 " + id + "（写盘成功后下一条消息生效）");
-              },
-            }, "写入并启用"),
-            h("button", {
-              className: "ql-btn",
-              onClick: function () { applyCfg({ promptId: "qinglan-core" }); },
-            }, "切回内置 core"),
-          ),
         ),
       );
     }
@@ -1545,7 +1462,7 @@ window.__ModuleLoader__.load({
         });
       } else if (ui.tab === "tier") body = h(TierTab, { status: status, active: ui.open, cfg: effectiveCfg, apply: cfgBus.apply });
       else if (ui.tab === "switch") body = h(SwitchTab, { status: status, cfg: effectiveCfg, cfgState: cfgState, active: ui.open, apply: cfgBus.apply });
-      else if (ui.tab === "prompt") body = h(PromptTab, { status: status, cfg: effectiveCfg, active: ui.open, apply: cfgBus.apply, applyText: cfgBus.applyText });
+      else if (ui.tab === "prompt") body = h(PromptTab, { status: status, cfg: effectiveCfg, active: ui.open });
       else body = h(AboutTab, { status: status, active: ui.open });
 
       var headMeta = status

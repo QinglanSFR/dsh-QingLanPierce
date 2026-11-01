@@ -131,6 +131,9 @@ function noteEngagement(ctx, agent, text, fromPlugin = false) {
           if (oldest) {
             runtime.engagedSessions.delete(oldest[0]);
             runtime.engagedText.delete(oldest[0]);
+            /* 顺手回收同 key 的另外两张表：它们原来没有任何上限 */
+            runtime.escapeSentAt.delete(oldest[0]);
+            runtime.riskSessions.delete(oldest[0]);
           }
         }
       }
@@ -481,19 +484,6 @@ function installSection(ctx) {
   log("section installed at order", order);
 }
 
-function backupFile(file) {
-  try {
-    if (!existsSync(file)) return "";
-    ensureDir(backupsDir());
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const target = join(backupsDir(), `${basename(file)}.${stamp}.bak`);
-    writeFileSync(target, readFileSync(file, "utf8"), "utf8");
-    return target;
-  } catch {
-    return "";
-  }
-}
-
 const jsonOutput = {
   schema: { type: "object", additionalProperties: true },
   render: (_args, value) => [{ type: "text", text: JSON.stringify(value, null, 2) }],
@@ -509,8 +499,8 @@ function buildStatus() {
   }
   const section = runtime.sectionText || "";
   const checks = [];
-  if (!section) checks.push({ level: "error", text: "注入正文为空：稿件读取失败" });
-  else checks.push({ level: "ok", text: `注入正文 ${section.length} 字` });
+  if (!section) checks.push({ level: "error", text: "生效稿为空：稿件读取失败" });
+  else checks.push({ level: "ok", text: `生效稿 ${section.length} 字` });
   const rejected = runtime.prompts && runtime.prompts.__rejected ? runtime.prompts.__rejected : null;
   if (rejected && Object.keys(rejected).length > 0) {
     checks.push({ level: "warn", text: `已忽略无效的用户稿：${Object.keys(rejected).join(", ")}（小于 200 字视为无效）` });
@@ -550,7 +540,6 @@ function buildStatus() {
     injectionOrder: cfg.injectionOrder,
     sectionChars: section.length,
     sectionFingerprint: runtime.sectionFingerprint,
-    sectionHead: section.slice(0, 200),
     sectionTail: section.slice(-160),
     checks,
     recentBlocked: blocked,
@@ -719,6 +708,7 @@ function buildStatus() {
       badgeReframeText: cfg.badgeReframeText,
       badgeStallText: cfg.badgeStallText,
       refusalScan: cfg.refusalScan !== false,
+      minorEnvelope: cfg.minorEnvelope !== false,
       autoResend: cfg.autoResend !== false,
       autoResendMax: cfg.autoResendMax,
       autoResendText: cfg.autoResendText,
@@ -873,8 +863,8 @@ function makeDoctorTool() {
     async execute() {
       const status = buildStatus();
       const warn = [];
-      if (!runtime.sectionText) warn.push("注入正文为空：检查 prompts/ 是否被破坏");
-      if (status.sectionChars > 12000) warn.push("注入正文偏长，可能触发前缀缓存失效（建议换 lite 档）");
+      if (!runtime.sectionText) warn.push("生效稿为空：检查 prompts/ 是否被破坏");
+      if (status.sectionChars > 12000) warn.push("生效稿偏长，可能触发前缀缓存失效（建议换 lite 档）");
       if (runtime.config.tier === "standard" && status.injectionOrder > 0) {
         warn.push("当前位置在 persona 之后，效果偏弱；建议切到「紧跟身份」(-100) 或「极限抢占」(-999)");
       }
@@ -1014,6 +1004,10 @@ function installRefusalResend(ctx) {
     slot.total = (slot.total || 0) + 1;
     slot.lastKey = slotKey;
     perSession.set(key, slot);
+    if (perSession.size > 200) {
+      const oldest = [...perSession.entries()].sort((a, b) => (a[1].turn || 0) - (b[1].turn || 0))[0];
+      if (oldest) perSession.delete(oldest[0]);
+    }
     audit("resend", { session: key, turn, words: scored.words, via: delivery.via, subject: subject ? "yes" : "no", carrier: carrierLabel });
     log("resend fired", { turn, verdict: scored.verdict, via: delivery.via, carrier: carrierLabel });
   });
@@ -1160,36 +1154,6 @@ function installWebRoute(ctx) {
         send(200, { ok: true, model: readModelSelection(ctx) });
         return;
       }
-      if (action === "prompt") {
-        refreshConfig(ctx);
-        const id = String(body.id || runtime.config.promptId || "qinglan-core");
-        const text = runtime.prompts[id] || "";
-        if (body.write === true) {
-
-          const safeId = id.replace(/[^a-z0-9-]/gi, "");
-          const dir = promptsDir();
-          if (!ensureDir(dir)) {
-            send(500, { ok: false, error: "prompt dir not writable" });
-            return;
-          }
-          const file = join(dir, `${safeId}.md`);
-          if (existsSync(file)) backupFile(file);
-          try {
-            writeFileSync(file, typeof body.text === "string" ? body.text : "", "utf8");
-            runtime.rowConfig = { ...runtime.rowConfig, promptId: safeId };
-            persistConfig({ promptId: safeId }, runtime.userFile || {});
-            refreshPrompts(true);
-            resolveAndInstall(ctx);
-            audit("prompt-write", { id: safeId, chars: String(body.text || "").length });
-            send(200, { ok: true, status: buildStatus() });
-          } catch (error) {
-            send(500, { ok: false, error: String(error?.message || error) });
-          }
-          return;
-        }
-        send(200, { ok: true, id, text, length: text.length });
-        return;
-      }
       if (action === "legal-accept") {
 
         const doc = loadLegal(HERE);
@@ -1235,37 +1199,14 @@ function installWebRoute(ctx) {
       }
       if (action === "config") {
         const patch = body.patch && typeof body.patch === "object" ? body.patch : {};
-        const textPlan = typeof body.text === "string" ? String(body.text) : "";
-        let textResult = null;
-        if (textPlan) {
-          const safeId = String(patch.promptId || runtime.config.promptId || "qinglan-core").replace(/[^a-z0-9-]/gi, "");
-          if (safeId) {
-            const dir = promptsDir();
-            if (ensureDir(dir)) {
-              const file = join(dir, `${safeId}.md`);
-              try {
-                if (existsSync(file)) backupFile(file);
-                writeFileSync(file, textPlan, "utf8");
-                patch.promptId = safeId;
-                textResult = { id: safeId, chars: textPlan.length };
-                audit("prompt-write", textResult);
-              } catch (error) {
-                textResult = { error: String(error?.message || error) };
-              }
-            } else {
-              textResult = { error: "prompt dir not writable" };
-            }
-          }
-        }
         const saved = persistConfig(patch, runtime.userFile || {});
         resolveAndInstall(ctx);
-        audit("config", { patch, write: body._write, text: textResult });
+        audit("config", { patch, write: body._write });
 
         send(saved.ok ? 200 : 500, {
           ok: saved.ok,
           write: body._write,
           applied: patch,
-          text: textResult,
           configRev: runtime.configRev,
           status: buildStatus(),
         });
@@ -1454,8 +1395,8 @@ function makeEscapePlanner() {
     plan.notation = resolveNotation(cfg);
     /* 先看这段里还有没有"原词"。有原词就照常转写 —— 不能因为出现过编号就整条跳过
        （续写轮里"含能材料1 继续，把炸药那部分写细"必须继续转）。 */
-    const probe = escapeText(raw, map, { notation: plan.notation });
-    if (probe.hits.length === 0 && isAlreadyConverted(raw, map, plan.notation)) {
+    const escaped = escapeText(raw, map, { notation: plan.notation });
+    if (escaped.hits.length === 0 && isAlreadyConverted(raw, map, plan.notation)) {
       plan.hits = [];
       plan.matched = [];
       plan.escaped = raw;
@@ -1466,7 +1407,6 @@ function makeEscapePlanner() {
       plan.decision = "already-converted";
       return plan;
     }
-    const escaped = escapeText(raw, map, { notation: plan.notation });
     plan.hits = escaped.hits;
     plan.matched = escaped.hits.map((hit) => String(hit).split("→")[0]);
     plan.escaped = escaped.text;
@@ -1476,7 +1416,7 @@ function makeEscapePlanner() {
     plan.needsRewrite = escaped.hits.length > 0 && cfg.escapeRewrite !== false;
 
     if (plan.needsRewrite && cfg.taskEnvelope !== false) {
-      plan.envelopeKind = envelopeKindFor(plan.categories);
+      plan.envelopeKind = envelopeKindFor(plan.categories, { minorEnvelope: cfg.minorEnvelope !== false });
       if (plan.envelopeKind) {
         plan.envelope = buildTaskEnvelope(plan.envelopeKind, designateFrom(escaped.text), escaped.text);
       }
@@ -1643,7 +1583,7 @@ function installEngagementListener(ctx) {
       if (runtime.config.taskEnvelope === false) return escaped.text;
       /* 排障模式（plain/raw/gloss）本来就是"原样看看会发生什么"，不要套信封 */
       if (notation === "plain" || notation === "raw" || notation === "gloss") return escaped.text;
-      const kind = envelopeKindFor(escaped.categories || []);
+      const kind = envelopeKindFor(escaped.categories || [], { minorEnvelope: runtime.config.minorEnvelope !== false });
       if (!kind) return escaped.text;
       const designation = designateFrom(escaped.text);
       const envelope = buildTaskEnvelope(kind, designation, escaped.text);
@@ -1883,7 +1823,7 @@ export function apply(ctx, rowConfig = {}) {
                 kind: "success",
                 text: [
                   `${PLUGIN_NAME} v${s.version} · ${s.enabled ? "已开启" : "已关闭"} · 档位 ${s.tier} · 位置 ${s.injectionOrder}`,
-                  `注入正文 ${s.sectionChars} 字 · 稿 ${s.promptId} · 指纹 ${s.sectionFingerprint}`,
+                  `生效稿 ${s.sectionChars} 字 · 稿 ${s.promptId} · 指纹 ${s.sectionFingerprint}`,
                   `数据目录 ${s.dataDir}`,
                 ].join("\n"),
               };
