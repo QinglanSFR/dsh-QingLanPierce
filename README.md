@@ -1,4 +1,4 @@
-# QingLan · 破甲中枢（dsh-QingLanPierce 1.0.1）
+# QingLan · 破甲中枢（dsh-QingLanPierce 1.0.3）
 
 > ## ⛔ 使用限制与责任声明（首屏必读）
 >
@@ -64,12 +64,12 @@ DSH 桌面版自带插件管理器（右上角 … 菜单里）。打开后：
 2. 在输入框填以下任一种规格，然后确认：
    - **GitHub 地址**：`github:QinglanSFR/dsh-QingLanPierce`（仓库需为公开；私有仓库无法被直接拉取）
    - **npm 包名**：若你把它发布到 npm，填包名即可
-   - **本地路径**：解压后的插件目录绝对路径（如 `D:\plugins\dsh-QingLanPierce-1.0.1`）
+   - **本地路径**：解压后的插件目录绝对路径（如 `D:\plugins\dsh-QingLanPierce-1.0.3`）
 3. 等它装完，**完全退出并重启 DSH**。
 
 ### 方式 B：手动安装（桌面版同样可用，最稳）
 
-1. 把 `dsh-QingLanPierce-1.0.1` 整个目录复制到 `$DSH_HOME/plugins/dsh-QingLanPierce`
+1. 把 `dsh-QingLanPierce-1.0.3` 整个目录复制到 `$DSH_HOME/plugins/dsh-QingLanPierce`
    （Windows 默认 `%USERPROFILE%\.dsh\plugins\dsh-QingLanPierce`）
 2. 编辑 `$DSH_HOME/profiles/desktop/package.json`，两处各加一项：
 
@@ -94,7 +94,7 @@ cd <解压后的插件目录>
 
 ```bash
 # macOS / Linux / WSL
-cd /path/to/dsh-QingLanPierce-1.0.1
+cd /path/to/dsh-QingLanPierce-1.0.3
 chmod +x install.sh uninstall.sh && ./install.sh
 ```
 
@@ -107,7 +107,7 @@ chmod +x install.sh uninstall.sh && ./install.sh
 ### 方式 D：命令行（仅 `web` / `tui` / 自建 profile）
 
 ```bash
-dsh plugin --profile web add "file:/绝对路径/dsh-QingLanPierce-1.0.1"
+dsh plugin --profile web add "file:/绝对路径/dsh-QingLanPierce-1.0.3"
 ```
 
 ### 卸载
@@ -200,6 +200,7 @@ $DSH_HOME/dsh-QingLanPierce/
 | 键 | 默认 | 作用 |
 |---|---|---|
 | `minorEnvelope` | `true` | 未成年类是否套「卷宗条目」前件。设 `false` 退回原样（只换指称、不加前件） |
+| `stallResend` | `false` | 追问是否触发补发。默认关（提问不设限）；设 `true` 回到"只问不答也会被催"的旧行为 |
 | `resendFrameRotation` | `true` | 补发走内置三套体例轮换；设 `false` 才用 `autoResendText` |
 | `refusalScan` | `true` | 关掉后不再扫描输出、也不触发补发 |
 | `taskEnvelope` | `true` | 关掉后只做词面转写，不套任务信封 |

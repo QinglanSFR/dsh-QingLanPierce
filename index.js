@@ -523,7 +523,7 @@ function buildStatus() {
   }
   const recent = runtime.pendingEngagements.slice(-5);
   const blocked = recent.filter(
-    (row) => row.verdict === "refusal" || row.verdict === "fallback" || row.verdict === "stall",
+    (row) => row.verdict === "refusal" || row.verdict === "fallback",
   ).length;
   return {
     plugin: PLUGIN_ID,
@@ -928,9 +928,10 @@ function installRefusalResend(ctx) {
         break;
       }
     }
+    /* 提问不触发补发；要恢复旧行为把 stallResend 设成 true */
     const blocked =
       scored.verdict === VERDICT.REFUSAL
-      || scored.verdict === VERDICT.STALL
+      || (cfg.stallResend === true && scored.verdict === VERDICT.STALL)
       || (cfg.mildRecover && scored.verdict === VERDICT.FALLBACK);
     if (!blocked) return;
 
@@ -973,7 +974,10 @@ function installRefusalResend(ctx) {
     let carrier = 0;
     let base = "";
     let carrierLabel = "default";
-    if (valuesTerm && cfg.autoResendValuesText) {
+    if (scored.verdict === VERDICT.STALL && cfg.stallResendText) {
+      base = cfg.stallResendText;
+      carrierLabel = "stall";
+    } else if (valuesTerm && cfg.autoResendValuesText) {
       base = cfg.autoResendValuesText;
       carrierLabel = "values";
     } else if (cfg.resendFrameRotation !== false) {

@@ -608,10 +608,10 @@ window.__ModuleLoader__.load({
       if (!shield) return PALETTE.idle;
       if (shield.enabled === false) return PALETTE.off;
       if (shield.running) return PALETTE.running;
-      if (shield.verdict === "pass" || shield.verdict === "defense") return PALETTE.pass;
-      if (shield.verdict === "refusal" || shield.verdict === "fallback" || shield.verdict === "stall") {
-        return PALETTE.blocked;
+      if (shield.verdict === "pass" || shield.verdict === "defense" || shield.verdict === "stall") {
+        return PALETTE.pass;
       }
+      if (shield.verdict === "refusal" || shield.verdict === "fallback") return PALETTE.blocked;
       return PALETTE.idle;
     }
 
@@ -651,7 +651,7 @@ window.__ModuleLoader__.load({
         }
       } else if (verdict === "stall") {
         text = stallText;
-        flashKey = "blocked";
+        flashKey = "pass";
       } else if (verdict === "refusal" || verdict === "fallback") {
         text = failText + (shield && shield.words && shield.words[0] ? " · " + shield.words[0] : "");
         flashKey = "blocked";
