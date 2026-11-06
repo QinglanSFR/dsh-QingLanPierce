@@ -35,7 +35,8 @@ if ($profileDir) {
     if ($pkg.dependencies) { $pkg.dependencies.PSObject.Properties.Remove($PluginId) | Out-Null }
     $bundles = @($pkg.dsh.profile.bundles) | Where-Object { $_ -ne $PluginId }
     $pkg.dsh.profile.bundles = $bundles
-    $pkg | ConvertTo-Json -Depth 12 | Set-Content -Path $pkgPath -Encoding UTF8
+    # 同 install.ps1：UTF8 不带 BOM，否则宿主 JSON.parse 会失败
+    [System.IO.File]::WriteAllText($pkgPath, (($pkg | ConvertTo-Json -Depth 12) + "`n"), (New-Object System.Text.UTF8Encoding($false)))
     Ok "已从 $profileDir 移除依赖与 bundle 项（备份：package.json.bak-uninstall-$stamp）"
   }
 }

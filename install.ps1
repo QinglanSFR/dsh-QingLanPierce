@@ -75,7 +75,10 @@ if ($profileName -eq 'desktop') {
   } else { Warn "bundle 已存在，跳过" }
 }
 
-$pkg | ConvertTo-Json -Depth 12 | Set-Content -Path $pkgPath -Encoding UTF8
+# Set-Content -Encoding UTF8 在 Windows PowerShell 5.1 会写出 BOM，而宿主的 profile
+# 解析是裸 JSON.parse（不剥 BOM），带 BOM 会让 DSH 下次启动直接报 manifest 解析失败。
+# 用 .NET 的 UTF8Encoding($false) 明确写无 BOM。
+[System.IO.File]::WriteAllText($pkgPath, (($pkg | ConvertTo-Json -Depth 12) + "`n"), (New-Object System.Text.UTF8Encoding($false)))
 
 W "`n文件已就位。接下来【二选一】完成装载（本脚本不调用 pnpm，避免转发器递归）："
 W "  A. 打开 DeepSeek Harness → 插件管理器 → 安装/启用 $PluginId（桌面版推荐）"

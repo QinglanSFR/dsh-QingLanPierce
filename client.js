@@ -338,14 +338,12 @@ window.__ModuleLoader__.load({
       pollTimer: 0,
       pullTimer: 0,
       pending: null,
-      pendingText: null,
       touched: false,
       inFlight: 0,
       busy: false,
       failures: 0,
       lastError: "",
       lastResult: null,
-      draftText: "",
       status: { merges: 0, drops: 0, writes: 0, retries: 0, lastAt: 0 },
     };
 
@@ -364,7 +362,7 @@ window.__ModuleLoader__.load({
 
     function cfgEnsure() {
       if (cfgStore.value && typeof cfgStore.value.enabled === "boolean") return cfgStore.value;
-      cfgStore.value = Object.assign({}, CFG_SEED, cfgStore.seeded || {}, cfgStore.value || {}, cfgStore.pending || {}, draftFields());
+      cfgStore.value = Object.assign({}, CFG_SEED, cfgStore.seeded || {}, cfgStore.value || {}, cfgStore.pending || {});
       cfgNotify();
       return cfgStore.value;
     }
@@ -385,15 +383,8 @@ window.__ModuleLoader__.load({
         cfgStore.seeded || {},
         cfgStore.value || {},
         cfgStore.pending || {},
-        draftFields(),
       );
       cfgNotify();
-    }
-
-    function draftFields() {
-      return cfgStore.pendingText && cfgStore.pendingText.active
-        ? { promptId: cfgStore.pendingText.id || undefined }
-        : {};
     }
 
     function cfgAcceptServer(config, rev) {
@@ -433,16 +424,12 @@ window.__ModuleLoader__.load({
     function cfgFlush() {
       cfgStore.writeTimer = 0;
       var patch = Object.assign({}, cfgStore.pending || {});
-      var textPlan = cfgStore.pendingText && cfgStore.pendingText.active ? cfgStore.pendingText : null;
-      if (Object.keys(patch).length === 0 && !textPlan) return;
-      if (textPlan && textPlan.text === undefined) return;
+      if (Object.keys(patch).length === 0) return;
 
       cfgStore.pending = null;
-      cfgStore.pendingText = null;
       cfgStore.localSeq += 1;
       var id = cfgStore.localSeq;
       var bodyPatch = patch;
-      if (textPlan) bodyPatch = Object.assign({}, patch, { promptId: textPlan.id || patch.promptId });
       cfgStore.inFlight = id;
       cfgStore.busy = true;
       cfgStore.touched = true;
@@ -453,7 +440,6 @@ window.__ModuleLoader__.load({
       var send = function () {
         attempt += 1;
         var payload = { patch: bodyPatch, _write: id };
-        if (textPlan) payload.text = textPlan.text;
         apiCall("config", payload).then(function (json) {
 
           if (cfgStore.localSeq !== id) {
@@ -504,10 +490,6 @@ window.__ModuleLoader__.load({
 
     function cfgSchedule(plan) {
       cfgStore.pending = Object.assign({}, cfgStore.pending || {}, plan.items || {});
-      if (plan.text !== undefined) {
-        cfgStore.pendingText = { active: true, id: plan.id || "", text: plan.text };
-        cfgStore.draftText = String(plan.text);
-      }
       cfgPublish();
       if (cfgStore.writeTimer) return;
       cfgStore.writeTimer = window.setTimeout(cfgFlush, 200);
@@ -632,7 +614,7 @@ window.__ModuleLoader__.load({
       var passText = cfg.badgePassText || "数据没有发生变化，你小子防封可以";
       var failText = cfg.badgeFailText || "我被模型Hook了";
       var reframeText = cfg.badgeReframeText || "它想给你替代方案，正在替你转写";
-      var stallText = cfg.badgeStallText || "它在问你参数，正在替你续写";
+      var stallText = cfg.badgeStallText || "它在反问你，正常";
       var running = !!(shield && shield.running);
       var verdict = shield && shield.verdict;
       var flashKey = "";

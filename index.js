@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,7 +9,6 @@ import {
   PLUGIN_NAME,
   VERSION,
   auditPath,
-  backupsDir,
   configPath,
   dataDir,
   ensureDir,
@@ -43,7 +42,6 @@ import {
 import {
   ENVELOPE_CLASSES,
   NOTATION_MODES,
-  NOTATION_POLICY,
   aliasOwnerProblems as lexiconAliasOwnerProblems,
   aliasProblems as lexiconAliasProblems,
   aliasSubstringProblems as lexiconAliasSubstringProblems,
@@ -196,19 +194,6 @@ const LONG_TEXT_KEY = /^(_?text|textBefore|textAfter|raw|note|section(Head|Tail)
 function truncateForAudit(value, limit = AUDIT_TEXT_LIMIT) {
   if (typeof value !== "string") return value;
   return value.length > limit ? `${value.slice(0, limit)}…[截断，共 ${value.length} 字]` : value;
-}
-
-function textDigest(text, words) {
-  const value = String(text || "");
-  const cjk = (value.match(/[\u4e00-\u9fa5]/g) || []).length;
-  const latin = (value.match(/[A-Za-z]/g) || []).length;
-  return {
-    len: value.length,
-    cjk,
-    latin,
-    head: value.slice(0, 60),
-    matched: Array.isArray(words) ? words.slice(0, 12) : [],
-  };
 }
 
 function auditPathOf() {
@@ -422,9 +407,22 @@ const ENVELOPE_MARK = "【任务信封】";
 
 function buildSectionText() {
   const cfg = runtime.config;
-  if (cfg.enabled === false) return "";
+  if (cfg.enabled === false) {
+    /* 必须把上一轮的正文清掉：否则关掉总开关后状态页还在报「生效稿 10538 字」，
+       而实际上一个字都没注入。 */
+    runtime.sectionText = "";
+    runtime.sectionFingerprint = "";
+    /* lastAssembly 也要跟着归零，否则状态里还留着一个"上次构建 10538 字"的假数字 */
+    runtime.lastAssembly = { at: Date.now(), chars: 0, order: cfg.injectionOrder, tier: cfg.tier, promptId: "" };
+    return "";
+  }
 
-  if (!legalAcceptedNow()) return LEGAL_PENDING_SECTION;
+  if (!legalAcceptedNow()) {
+    runtime.sectionText = LEGAL_PENDING_SECTION;
+    runtime.sectionFingerprint = fingerprint(LEGAL_PENDING_SECTION);
+    runtime.lastAssembly = { at: Date.now(), chars: LEGAL_PENDING_SECTION.length, order: cfg.injectionOrder, tier: cfg.tier, promptId: "" };
+    return LEGAL_PENDING_SECTION;
+  }
   const requested = cfg.promptId && typeof runtime.prompts[cfg.promptId] === "string" ? cfg.promptId : pickPromptId(cfg.tier);
   let id = requested;
   let text = runtime.prompts[id] || "";
@@ -499,7 +497,8 @@ function buildStatus() {
   }
   const section = runtime.sectionText || "";
   const checks = [];
-  if (!section) checks.push({ level: "error", text: "生效稿为空：稿件读取失败" });
+  if (cfg.enabled === false) checks.push({ level: "warn", text: "总开关已关闭：不注入任何内容" });
+  else if (!section) checks.push({ level: "error", text: "生效稿为空：稿件读取失败" });
   else checks.push({ level: "ok", text: `生效稿 ${section.length} 字` });
   const rejected = runtime.prompts && runtime.prompts.__rejected ? runtime.prompts.__rejected : null;
   if (rejected && Object.keys(rejected).length > 0) {
@@ -716,7 +715,6 @@ function buildStatus() {
       officialFilesTouched: false,
       officialFilesTouchedSource: "static-declaration",
       shim: false,
-      backupsWrittenUnder: backupsDir(),
     },
   };
 }
@@ -1110,6 +1108,39 @@ function installWebRoute(ctx) {
 
       }
     };
+    /* 两道闸，各挡一类：
+       ① Origin：只拒「可解析且与 Host 不同源」的来源。**不能**连 null 一起拒 ——
+          桌面端的 location.href 是 dsh-app://app/（自定义协议，不透明来源），它发出的请求
+          带的就是 Origin: null，一律拒绝等于把客户端自己锁在门外。
+       ② content-type：跨站写入要么走「简单请求」三种类型（下面 415 拦掉），
+          要么用 application/json —— 那会触发 CORS 预检，而本处理器对 OPTIONS 返回 405，
+          浏览器直接拦下。所以真正挡住 CSRF 的是这一条，不是 Origin。 */
+    const originValue = String(req.headers?.origin || "");
+    if (originValue) {
+      const hostValue = String(req.headers?.host || "");
+      let parsed = null;
+      try {
+        parsed = new URL(originValue);
+      } catch {
+        parsed = null;
+      }
+      /* 只对 http(s) 来源做同源比对：桌面端的 dsh-app://app 与 file:// 都不是 http(s)，
+         它们的来源要么序列化成 "null"、要么是本应用的私有协议 —— 一律放行，
+         否则一改 Origin 的序列化方式就把客户端自己挡在外面。 */
+      const isWebOrigin = parsed && (parsed.protocol === "http:" || parsed.protocol === "https:");
+      if (isWebOrigin && parsed.host && parsed.host !== hostValue) {
+        audit("http-origin-reject", { why: "cross-origin", origin: originValue, host: hostValue });
+        send(403, { ok: false, error: "来源不被接受：只接受同源请求" });
+        return;
+      }
+    }
+    const contentType = String(req.headers?.["content-type"] || "").toLowerCase();
+    const SIMPLE_REQUEST_TYPES = ["text/plain", "application/x-www-form-urlencoded", "multipart/form-data"];
+    if (req.method === "POST" && SIMPLE_REQUEST_TYPES.some((type) => contentType.startsWith(type))) {
+      audit("http-origin-reject", { why: "simple-request-content-type", contentType });
+      send(415, { ok: false, error: "只接受 application/json 请求体" });
+      return;
+    }
     try {
       if (req.method === "GET") {
         refreshConfig(ctx);
@@ -1131,7 +1162,8 @@ function installWebRoute(ctx) {
       const action = String(body.action || "status");
 
       const legalGate = legalAcceptedNow();
-      const HTTP_READ_ONLY = new Set(["status", "debug", "client-report", "client-reports", "legal-accept", "escape-check"]);
+      /* debug 会把配置路径与整份 userFile 抖出来，不该在"未确认协议"阶段可读。 */
+      const HTTP_READ_ONLY = new Set(["status", "client-report", "client-reports", "legal-accept", "escape-check"]);
       if (!legalGate && !HTTP_READ_ONLY.has(action)) {
         audit("legal-blocked", { action, via: "http" });
         send(403, { ok: false, error: "未接受免责协议：请先在界面上确认协议（本插件不提供跳过）", legal: buildStatus().legal });
@@ -1715,6 +1747,12 @@ function installEngagementListener(ctx) {
       const messages = decision.messages.map((message) => {
         try {
           if (!message || message.role !== "user" || isPluginNote(message)) return message;
+          /* 宿主自己注入的消息（runtime-context 快照）也是 role=user，但它不是用户提问：
+             宿主在 agent-loop 的 step() 里会丢弃我们对它的改写、append 自己的原版，
+             所以改写它既到不了模型，又会把 engagedText 覆盖成快照开头那段，
+             让补发的【原任务】变成 "Current runtime context…"。
+             只处理 source.kind === "user" 的真实输入；没有 source 的旧夹具照旧处理。 */
+          if (message.source && message.source.kind !== "user") return message;
           const raw = textOfMessage(message);
           if (!raw) return message;
           sawUserText = true;
@@ -1864,7 +1902,7 @@ export function apply(ctx, rowConfig = {}) {
     badgeFailText: runtime.config.badgeFailText,
     badgeThinkingText: runtime.config.badgeThinkingText || runtime.config.badgeText,
     badgeReframeText: runtime.config.badgeReframeText || "它想给你替代方案，正在替你转写",
-    badgeStallText: runtime.config.badgeStallText || "它在问你参数，正在替你续写",
+    badgeStallText: runtime.config.badgeStallText || "它在反问你，正常",
     tier: runtime.config.tier,
     injectionOrder: runtime.config.injectionOrder,
     reframe: runtime.riskSessions.size > 0,

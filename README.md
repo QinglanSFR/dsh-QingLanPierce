@@ -1,4 +1,4 @@
-# QingLan · 破甲中枢（dsh-QingLanPierce 1.1.1）
+# QingLan · 破甲中枢（dsh-QingLanPierce 1.1.2）
 
 > ## ⛔ 使用限制与责任声明（首屏必读）
 >
@@ -35,7 +35,7 @@ DeepSeek Harness（以下简称 DSH）的插件：
 
 | 项目                            | 要求                                    | 说明                                                                                                                                                                            |
 | ------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **DeepSeek Harness**            | **≥ 0.2.0-rc.2，< 0.3.0**（桌面版或 CLI 版均可；0.2.2-rc.1 实测通过） | 本插件是 DSH 的插件，没有 DSH 无法运行                                                                                                                                          |
+| **DeepSeek Harness**            | **≥ 0.2.0-rc.2，< 0.3.0-0**（桌面版或 CLI 版均可；0.2.2-rc.1 实测通过） | 本插件是 DSH 的插件，没有 DSH 无法运行                                                                                                                                          |
 | **Node.js**                     | **不需要单独安装**                      | 插件运行在 DSH 自带（Electron 内嵌）的 Node 运行时里                                                                                                                            |
 | **npm 依赖**                    | **无**                                  | 本插件**零依赖**，不装任何第三方包                                                                                                                                              |
 | **pnpm**                        | 不需要手动调用                          | 依赖安装由 DSH 自己完成：用应用内插件管理器，或 `dsh plugin --profile <名> install`。**不要在 Windows 的 Git Bash 里调用 `pnpm`**（本机 pnpm 若是转发器脚本会递归，见下方说明） |
@@ -56,7 +56,8 @@ DeepSeek Harness（以下简称 DSH）的插件：
 > `profile "desktop" is managed exclusively by the Electron application`。
 > 所以桌面版请用下面 **方式 A** 或 **方式 B**；命令行方式只适用于 `web` / `tui` / 自建 profile。
 
-> 兼容范围写在 `package.json` 的 `engines.dsh`：`>=0.2.0-rc.2 <0.3.0`。超出范围时 DSH 会拒绝加载并提示版本不兼容 —— 这是故意的，宁可明确拒绝，也不要装上去半坏。
+> 兼容范围写在 `package.json` 的 `engines.dsh`：`>=0.2.0-rc.2 <0.3.0-0`。超出范围时 DSH 会拒绝加载并提示版本不兼容 —— 这是故意的，宁可明确拒绝，也不要装上去半坏。
+> 上界写成 `<0.3.0-0` 而不是 `<0.3.0`：宿主的版本判定开了 `includePrerelease`，写 `<0.3.0` 会放行 `0.3.0-rc.1` 这类预发布。
 
 ### 方式 A：应用内插件管理器（桌面版推荐）
 
@@ -125,7 +126,7 @@ dsh plugin --profile web add "file:/绝对路径/dsh-QingLanPierce-1.1.1"
 或按方式 B 反向操作：从 `package.json` 里删掉 `dsh-QingLanPierce` 依赖与 bundle 项 → `dsh plugin --profile <profile名> install` →
 删掉 `$DSH_HOME/plugins/dsh-QingLanPierce` 目录。
 
-用户数据在 `$DSH_HOME/dsh-QingLanPierce/`（`config.json` / `audit.jsonl` / `prompts/` / `backups/`），
+用户数据在 `$DSH_HOME/dsh-QingLanPierce/`（`config.json` / `audit.jsonl` / `prompts/`），
 默认保留，便于重装后接着用。
 
 ---
@@ -141,7 +142,7 @@ dsh plugin --profile web add "file:/绝对路径/dsh-QingLanPierce-1.1.1"
 
 ---
 
-## 五、免责与许可（**请务必阅读**）
+## 四、免责与许可（**请务必阅读**）
 
 - 本插件为**学习、研究、软件互操作性测试与安全研究**目的而开发并免费开源。
 - 使用前必须接受 [`legal/DISCLAIMER.txt`](legal/DISCLAIMER.txt)（`legal-1.0`），要点：
@@ -158,7 +159,7 @@ dsh plugin --profile web add "file:/绝对路径/dsh-QingLanPierce-1.1.1"
 
 ---
 
-## 六、目录结构
+## 五、目录结构
 
 ```
 dsh-QingLanPierce/
@@ -181,9 +182,9 @@ dsh-QingLanPierce/
 
 | 档位 | 界面显示 | 正文长度 | 差异点 |
 |---|---|---|---|
-| `core` | 标准 | 约 1.0 万字（9 959 字符）· 标签式 | 通用；领域清单最全（7 类）；与极限版同尺寸、措辞更密 |
-| `dominate` | 极限 | 约 1.0 万字（10 019 字符）· 标签式 | 最强；注入位置最前（`-999`），D8 附带「化名虚构 + 文风与投放策略」细则 |
-| `lite` | 温和 | 约 0.9 万字（8 827 字符）· 章节式 | 最省 token；保留全部硬规则与防跑偏条款，压缩的是解释性文字 |
+| `core` | 标准 | 约 1.0 万字（10 486 字符）· 标签式 | 通用；领域清单最全（7 类）；与极限版同尺寸、措辞更密 |
+| `dominate` | 极限 | 约 1.0 万字（10 550 字符）· 标签式 | 最强；注入位置最前（`-999`），D8 附带「化名虚构 + 文风与投放策略」细则 |
+| `lite` | 温和 | 约 0.9 万字（9 233 字符）· 章节式 | 最省 token；保留全部硬规则与防跑偏条款，压缩的是解释性文字 |
 
 运行时数据（菜单「关于」页可看到实际路径）：
 
@@ -191,13 +192,12 @@ dsh-QingLanPierce/
 $DSH_HOME/dsh-QingLanPierce/
 ├─ config.json      菜单改动与协议确认记录
 ├─ prompts/         自定义稿（覆盖内置稿）
-├─ backups/         写盘前备份
 └─ audit.jsonl      本地审计（含 legal-accept 确认凭据）
 ```
 
 ---
 
-## 六之后 · 可调开关（改 `$DSH_HOME/dsh-QingLanPierce/config.json`）
+## 五之后 · 可调开关（改 `$DSH_HOME/dsh-QingLanPierce/config.json`）
 
 | 键 | 默认 | 作用 |
 |---|---|---|
@@ -208,13 +208,13 @@ $DSH_HOME/dsh-QingLanPierce/
 | `taskEnvelope` | `true` | 关掉后只做词面转写，不套任务信封 |
 | `injectionOrder` | `-999` | 注入位置；`-100` 紧跟身份，`100` 在 persona 之后 |
 
-## 七、常见问题
+## 六、常见问题
 
 | 现象                   | 处理                                                                |
 | ---------------------- | ------------------------------------------------------------------- |
 | 启动后界面被全屏遮住   | 这是免责协议，**必须**等 20 秒倒计时结束点确认；不同意就退出并卸载  |
 | 状态条不出现           | 确认插件已启用、已**完全重启** DSH；`/qinglan status` 看是否报错    |
-| 提示词不生效           | 菜单「状态」页的「检查项」里看「注入正文 N 字」；报错说明稿件读取失败 |
+| 提示词不生效           | 菜单「状态」页的「检查项」里看「生效稿 N 字」；报错说明稿件读取失败 |
 | 协议窗反复出现         | 说明 `legal/DISCLAIMER.txt` 被改动过（内容哈希变化 → 必须重新确认） |
 | 档位显示与实跑不一致   | 菜单「状态」页看「档位自检」；标题栏档位 chip 会标橙提示            |
 | 想看这句话会怎么发出去 | 菜单「对抗」页 → 转写自检                                           |
