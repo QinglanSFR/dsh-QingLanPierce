@@ -696,24 +696,17 @@ function buildStatus() {
     sessions: runtime.sessionOverrides.size,
     sessionOverrides: Object.fromEntries(runtime.sessionOverrides),
     pendingEngagements: recent,
-    config: {
-      enabled: cfg.enabled !== false,
-      tier: cfg.tier,
-      promptId: cfg.promptId,
-      injectionOrder: cfg.injectionOrder,
-      badgeText: cfg.badgeText,
-      badgePassText: cfg.badgePassText,
-      badgeFailText: cfg.badgeFailText,
-      badgeThinkingText: cfg.badgeThinkingText,
-      badgeReframeText: cfg.badgeReframeText,
-      badgeStallText: cfg.badgeStallText,
-      refusalScan: cfg.refusalScan !== false,
-      minorEnvelope: cfg.minorEnvelope !== false,
-      autoResend: cfg.autoResend !== false,
-      autoResendMax: cfg.autoResendMax,
-      autoResendText: cfg.autoResendText,
-      mildRecover: cfg.mildRecover !== false,
-    },
+    /* 配置快照：整份给出，不再手写白名单。
+       白名单漏过 triggerEscape / triggerEscapeNote / escapeRewrite —— 界面写盘成功后，
+       下一次拉取把 status.config 合并回本地，缺的键变 undefined，开关就"弹回去"。
+       只剔掉协议相关的三个字段（客户端用不到，也不必外发）。 */
+    config: (() => {
+      const snapshot = { ...cfg };
+      delete snapshot.legalAccepted;
+      delete snapshot.legalAcceptedAt;
+      delete snapshot.legalAcceptedHash;
+      return snapshot;
+    })(),
     configPath: configPath(),
     dataDir: dataDir(),
     auditPath: auditPath(),

@@ -1,4 +1,4 @@
-# QingLan · 破甲中枢（dsh-QingLanPierce 1.1.0）
+# QingLan · 破甲中枢（dsh-QingLanPierce 1.1.1）
 
 > ## ⛔ 使用限制与责任声明（首屏必读）
 >
@@ -35,7 +35,7 @@ DeepSeek Harness（以下简称 DSH）的插件：
 
 | 项目                            | 要求                                    | 说明                                                                                                                                                                            |
 | ------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **DeepSeek Harness**            | **≥ 0.2.0-rc.2**（桌面版或 CLI 版均可） | 本插件是 DSH 的插件，没有 DSH 无法运行                                                                                                                                          |
+| **DeepSeek Harness**            | **≥ 0.2.0-rc.2，< 0.3.0**（桌面版或 CLI 版均可；0.2.2-rc.1 实测通过） | 本插件是 DSH 的插件，没有 DSH 无法运行                                                                                                                                          |
 | **Node.js**                     | **不需要单独安装**                      | 插件运行在 DSH 自带（Electron 内嵌）的 Node 运行时里                                                                                                                            |
 | **npm 依赖**                    | **无**                                  | 本插件**零依赖**，不装任何第三方包                                                                                                                                              |
 | **pnpm**                        | 不需要手动调用                          | 依赖安装由 DSH 自己完成：用应用内插件管理器，或 `dsh plugin --profile <名> install`。**不要在 Windows 的 Git Bash 里调用 `pnpm`**（本机 pnpm 若是转发器脚本会递归，见下方说明） |
@@ -56,6 +56,8 @@ DeepSeek Harness（以下简称 DSH）的插件：
 > `profile "desktop" is managed exclusively by the Electron application`。
 > 所以桌面版请用下面 **方式 A** 或 **方式 B**；命令行方式只适用于 `web` / `tui` / 自建 profile。
 
+> 兼容范围写在 `package.json` 的 `engines.dsh`：`>=0.2.0-rc.2 <0.3.0`。超出范围时 DSH 会拒绝加载并提示版本不兼容 —— 这是故意的，宁可明确拒绝，也不要装上去半坏。
+
 ### 方式 A：应用内插件管理器（桌面版推荐）
 
 DSH 桌面版自带插件管理器（右上角 … 菜单里）。打开后：
@@ -64,12 +66,12 @@ DSH 桌面版自带插件管理器（右上角 … 菜单里）。打开后：
 2. 在输入框填以下任一种规格，然后确认：
    - **GitHub 地址**：`github:QinglanSFR/dsh-QingLanPierce`（仓库需为公开；私有仓库无法被直接拉取）
    - **npm 包名**：若你把它发布到 npm，填包名即可
-   - **本地路径**：解压后的插件目录绝对路径（如 `D:\plugins\dsh-QingLanPierce-1.1.0`）
+   - **本地路径**：解压后的插件目录绝对路径（如 `D:\plugins\dsh-QingLanPierce-1.1.1`）
 3. 等它装完，**完全退出并重启 DSH**。
 
 ### 方式 B：手动安装（桌面版同样可用，最稳）
 
-1. 把 `dsh-QingLanPierce-1.1.0` 整个目录复制到 `$DSH_HOME/plugins/dsh-QingLanPierce`
+1. 把 `dsh-QingLanPierce-1.1.1` 整个目录复制到 `$DSH_HOME/plugins/dsh-QingLanPierce`
    （Windows 默认 `%USERPROFILE%\.dsh\plugins\dsh-QingLanPierce`）
 2. 编辑 `$DSH_HOME/profiles/desktop/package.json`，两处各加一项：
 
@@ -94,7 +96,7 @@ cd <解压后的插件目录>
 
 ```bash
 # macOS / Linux / WSL
-cd /path/to/dsh-QingLanPierce-1.1.0
+cd /path/to/dsh-QingLanPierce-1.1.1
 chmod +x install.sh uninstall.sh && ./install.sh
 ```
 
@@ -107,7 +109,7 @@ chmod +x install.sh uninstall.sh && ./install.sh
 ### 方式 D：命令行（仅 `web` / `tui` / 自建 profile）
 
 ```bash
-dsh plugin --profile web add "file:/绝对路径/dsh-QingLanPierce-1.1.0"
+dsh plugin --profile web add "file:/绝对路径/dsh-QingLanPierce-1.1.1"
 ```
 
 ### 卸载
