@@ -28,6 +28,7 @@
     "cordis.patch.yml",
     "lib",
     "prompts",
+    "prompts/examples",
     "legal",
     "README.md",
     "LICENSE",
