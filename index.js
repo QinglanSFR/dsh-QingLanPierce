@@ -69,6 +69,7 @@ const LEGAL_COUNTDOWN_SECONDS = 20;
 
 const LEGAL_TEXT_MARKER = "[QINGLAN-LEGAL-TEXT-V1]";
 const BUILTIN_PROMPT_DIR = join(HERE, "prompts");
+const BUILTIN_EXAMPLES_DIR = join(BUILTIN_PROMPT_DIR, "examples");
 
 const runtime = {
   config: { ...DEFAULTS },
@@ -405,6 +406,26 @@ function legalAcceptedNow() {
 const LEGAL_PENDING_SECTION = "[QingLan · 待确认免责协议]";
 const ENVELOPE_MARK = "【任务信封】";
 
+/* 提示词里的 {{EXAMPLES_DIR}} 是运行时占位符：模型拿不到插件的相对路径，
+   必须在注入前换成本机绝对路径，否则「回答前先读示例」这条硬指针等于没写。
+   用户覆盖稿优先用 ~/.dsh/<plugin>/prompts/examples；没有就用插件自带的那份。
+   两份都不存在也照样填路径 —— 主稿已写明「读不到就标注并照常交付」。 */
+function examplesDirFor() {
+  try {
+    const user = join(promptsDir(), "examples");
+    if (existsSync(user)) return user;
+  } catch {
+
+  }
+  return BUILTIN_EXAMPLES_DIR;
+}
+
+function applyExamplesDir(text) {
+  if (typeof text !== "string" || !text.includes("{{EXAMPLES_DIR}}")) return text;
+  return text.split("{{EXAMPLES_DIR}}").join(examplesDirFor());
+}
+
+
 function buildSectionText() {
   const cfg = runtime.config;
   if (cfg.enabled === false) {
@@ -436,7 +457,8 @@ function buildSectionText() {
     }
   }
   if (!text) return "";
-  const meta = `[qd:${VERSION}|tier=${cfg.tier}|pos=${cfg.injectionOrder}|src=${id}]`;
+  text = applyExamplesDir(text);
+  const meta = `[qd:${VERSION}|tier=${cfg.tier}|pos=${cfg.injectionOrder}|src=${id}|ex=${existsSync(examplesDirFor()) ? "1" : "0"}]`;
   const body = `${text}\n\n${meta}`;
   const stamp = fingerprint(body);
   if (stamp !== runtime.sectionFingerprint) {
