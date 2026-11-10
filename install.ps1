@@ -49,6 +49,24 @@ robocopy $Source $destDir /MIR /XD .git dist /XF *.bak-* /NFL /NDL /NJH /NJS /NP
 if ($LASTEXITCODE -ge 8) { Err "复制失败（robocopy 退出码 $LASTEXITCODE）"; exit 1 }
 Ok "插件已就位：$destDir"
 
+# 记录本次安装用的 profile。卸载脚本靠它定位目标 —— 只按目录名猜会出事：
+# 插件装进 web、机器上又有 desktop 时，猜出来的 desktop 会被清，真正的 web
+# 依赖悬空，而插件目录照样被删，两边都不干净。
+$dataDir = Join-Path $dshRoot $PluginId
+New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+$installRecord = [pscustomobject]@{
+  profile    = $profileName
+  profileDir = $profileDir
+  script     = 'install.ps1'
+  at         = (Get-Date).ToUniversalTime().ToString('o')
+}
+[System.IO.File]::WriteAllText(
+  (Join-Path $dataDir 'install-profile.json'),
+  (($installRecord | ConvertTo-Json -Depth 4) + "`n"),
+  (New-Object System.Text.UTF8Encoding($false))
+)
+Ok "已记录安装 profile：$profileName（卸载时自动读取，无需再传 -Profile）"
+
 $pkgPath = Join-Path $profileDir 'package.json'
 $patchPath = Join-Path $profileDir 'cordis.patch.yml'
 Copy-Item $pkgPath "$pkgPath.bak-$stamp" -Force

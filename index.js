@@ -106,6 +106,7 @@ const runtime = {
   errorLog: [],
   webRouteReady: false,
   webRouteAt: 0,
+  httpGuardReason: "",
   statusCtx: null,
   lastAssembly: { at: 0, chars: 0, order: null, tier: "", promptId: "" },
 };
@@ -590,6 +591,13 @@ function buildStatus() {
       webRouteAt: runtime.webRouteAt || 0,
       clientLastReport: runtime.lastClientReport || null,
       inject: inject,
+      /* HTTP 控制面的访问边界。loopback-only = 只接受本机来源；
+         skippedReason 非空说明因为宿主监听在非回环地址而整条路由没注册。 */
+      guard: {
+        policy: "loopback-only",
+        skippedReason: runtime.httpGuardReason || "",
+        lastPeer: runtime.lastClientAddress || "",
+      },
     },
 
     network: (() => {
@@ -1015,6 +1023,60 @@ function readBody(req, limit = 65536) {
   });
 }
 
+/* ── 本机来源判定 ────────────────────────────────────────────────────────────
+   本插件的 HTTP 面是一条**本机控制通道**：能读全量状态、能写配置、能切模型与
+   会话开关。它不该对任何非本机来源开放。
+   Origin/Host 同源比对只能挡浏览器发起的跨站请求；curl、脚本、SDK 这类客户端
+   根本不发 Origin，也不会走 CORS 预检。对它们唯一可靠的判据是 socket 的对端
+   地址（remoteAddress），加上 Host 头是不是回环名。 */
+
+function isLoopbackAddress(value) {
+  const addr = String(value || "").trim().toLowerCase();
+  if (!addr) return false;
+  if (addr === "::1" || addr === "0:0:0:0:0:0:0:1") return true;
+  /* IPv4-mapped IPv6：::ffff:127.0.0.1 —— Node 在双栈套接字上常给出这种形式 */
+  if (addr.startsWith("::ffff:")) return isLoopbackAddress(addr.slice(7));
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(addr);
+  if (!v4) return false;
+  return Number(v4[1]) === 127;
+}
+
+/* Host 头带端口（127.0.0.1:8080 / [::1]:8080），也可能直接是主机名。
+   剥出地址部分再判。返回空串表示「无法解析」，由调用方决定怎么兜底。 */
+function hostHeaderToAddress(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+  if (raw.startsWith("[")) {
+    const end = raw.indexOf("]");
+    return end > 0 ? raw.slice(1, end) : "";
+  }
+  const colons = raw.split(":").length - 1;
+  return colons === 1 ? raw.slice(0, raw.lastIndexOf(":")) : raw;
+}
+
+function isLoopbackHostHeader(value) {
+  const addr = hostHeaderToAddress(value);
+  /* 没有 Host 头（HTTP/1.0 或畸形请求）：不在这里判死，交给 peer 地址判定 */
+  if (!addr) return true;
+  if (addr === "localhost") return true;
+  return isLoopbackAddress(addr);
+}
+
+/* 宿主实际监听地址。拿不到（还没 listen）时返回 known=false，
+   由请求级校验兜底 —— 不能在启动顺序上赌运气，赌错就是整条控制面消失。 */
+function serverBindingLoopback(ctx) {
+  try {
+    const ws = ctx.get("webServer");
+    const addr = ws && typeof ws.server?.address === "function" ? ws.server.address() : null;
+    if (addr && typeof addr === "object" && typeof addr.address === "string" && addr.address) {
+      return { known: true, host: addr.address, loopback: isLoopbackAddress(addr.address) };
+    }
+  } catch {
+    /* 视为未知 */
+  }
+  return { known: false, host: "", loopback: false };
+}
+
 function installWebRoute(ctx) {
   const server = ctx.get("webServer");
   if (!server || typeof server.register !== "function") {
@@ -1034,6 +1096,20 @@ function installWebRoute(ctx) {
     return;
   }
   if (runtime.webRouteReady) return;
+
+  /* 宿主若明确监听在非回环地址（0.0.0.0 / :: / 局域网 IP），整条路由不注册。
+     代价是状态页报「HTTP 未就绪」，收益是局域网里谁都够不着这条控制面。
+     拿不到监听地址时照常注册 —— 请求级校验会逐个请求判定。 */
+  const bindCheck = serverBindingLoopback(ctx);
+  if (bindCheck.known && !bindCheck.loopback) {
+    runtime.webRouteReady = false;
+    runtime.httpGuardReason = `宿主监听在非回环地址 ${bindCheck.host}，控制接口已停止注册`;
+    log("web route skipped: non-loopback bind", bindCheck.host);
+    audit("http-route-skip", { host: bindCheck.host, why: "non-loopback-bind" });
+    return;
+  }
+  runtime.httpGuardReason = "";
+
   const handler = async (req, res) => {
 
     try {
@@ -1054,13 +1130,27 @@ function installWebRoute(ctx) {
 
       }
     };
-    /* 两道闸，各挡一类：
-       ① Origin：只拒「可解析且与 Host 不同源」的来源。**不能**连 null 一起拒 ——
-          桌面端的 location.href 是 dsh-app://app/（自定义协议，不透明来源），它发出的请求
-          带的就是 Origin: null，一律拒绝等于把客户端自己锁在门外。
-       ② content-type：跨站写入要么走「简单请求」三种类型（下面 415 拦掉），
-          要么用 application/json —— 那会触发 CORS 预检，而本处理器对 OPTIONS 返回 405，
-          浏览器直接拦下。所以真正挡住 CSRF 的是这一条，不是 Origin。 */
+    /* 三道闸，从强到弱：
+       ⓪ 对端地址：socket 的 remoteAddress 必须是回环。curl / 脚本 / 局域网主机
+          不发 Origin、也不走 CORS 预检，只有这一条拦得住它们。**这道闸在最前面**，
+          任何读写之前就该拒绝。
+       ① Host 头：必须解析成回环名。挡住 DNS rebinding —— 攻击者把自己的域名
+          解析到 127.0.0.1，浏览器就把它当同源，此时 Origin 与 Host 一致，
+          但 Host 头里是攻击者的域名，这里判死。
+       ② Origin + content-type：挡住浏览器发起的跨站写入（CSRF）。
+
+       ① 与 ② 都只是纵深防御，真正的边界是 ⓪。 */
+    const peerAddress = String(req.socket?.remoteAddress || "");
+    if (!isLoopbackAddress(peerAddress)) {
+      audit("http-reject", { why: "non-loopback-peer", peer: peerAddress });
+      send(403, { ok: false, error: "只接受本机请求" });
+      return;
+    }
+    if (!isLoopbackHostHeader(req.headers?.host)) {
+      audit("http-reject", { why: "non-loopback-host", host: String(req.headers?.host || "") });
+      send(403, { ok: false, error: "只接受本机访问" });
+      return;
+    }
     const originValue = String(req.headers?.origin || "");
     if (originValue) {
       const hostValue = String(req.headers?.host || "");

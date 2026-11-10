@@ -55,6 +55,19 @@ mkdir -p "$DEST_DIR"
 ( cd "$SOURCE_DIR" && tar --exclude='.git' --exclude='*.bak-*' --exclude='dist' -cf - . ) | ( cd "$DEST_DIR" && tar -xf - )
 ok "插件已就位：$DEST_DIR"
 
+# 记录本次安装用的 profile。卸载脚本靠它定位目标 —— 只按目录名猜会出事：
+# 插件装进 web、机器上又有 desktop 时，猜出来的 desktop 会被清，真正的 web
+# 依赖悬空，而插件目录照样被删，两边都不干净。
+DATA_DIR="$DSH_ROOT/$PLUGIN_ID"
+mkdir -p "$DATA_DIR"
+node - "$DATA_DIR/install-profile.json" "$PROFILE_NAME" "$PROFILE_DIR" <<'NODE'
+const fs = require("node:fs");
+const [out, profile, profileDir] = process.argv.slice(2);
+const record = { profile, profileDir, script: "install.sh", at: new Date().toISOString() };
+fs.writeFileSync(out, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+console.log(`    [OK] 已记录安装 profile：${profile}（卸载时自动读取，无需再传 --profile）`);
+NODE
+
 PKG="$PROFILE_DIR/package.json"
 PATCH="$PROFILE_DIR/cordis.patch.yml"
 cp "$PKG" "$PKG.bak-$STAMP"

@@ -1,4 +1,4 @@
-# QingLan · 破甲中枢（dsh-QingLanPierce 0.1.0-beta.1）
+# QingLan · 破甲中枢（dsh-QingLanPierce 0.1.0-beta.2）
 
 > ## ⛔ 使用限制与责任声明（首屏必读）
 >
@@ -101,6 +101,9 @@ chmod +x install.sh uninstall.sh && ./install.sh
 脚本只做三件事：备份 profile 配置 → 复制插件到 `$DSH_HOME/plugins/dsh-QingLanPierce` → 注册依赖
 （desktop profile 的 bundles 由桌面版应用自己管理，脚本不写）。**不触碰任何官方文件，也不调用 pnpm。**
 
+装完会把本次用的 profile 记到 `$DSH_HOME/dsh-QingLanPierce/install-profile.json`。**卸载脚本读这份记录**，
+所以你用 `-Profile web` 装的，卸载时不传参数也会正确清 `web` —— 不会因为目录里还有 `desktop` 就清错。
+
 > Windows 下若从 **Git Bash / MSYS / Cygwin** 运行 `install.sh`，脚本会**拒绝执行**并提示改用
 > `install.ps1` —— 因为本机 `pnpm` 可能是转发器脚本，从 POSIX shell 调用会自我递归。
 
@@ -120,6 +123,10 @@ dsh plugin --profile web add "file:/绝对路径/dsh-QingLanPierce"
 ./uninstall.sh                  # macOS / Linux；加 --purge-data
 ```
 
+**profile 定位顺序**：`-Profile` 参数 → `install-profile.json` 记录 → `desktop` / `web` / `default` 首个可用。
+三级都拿不到时会明确告警并**跳过 profile 清理**（不静默乱选）。装非 `desktop` profile 又用方式 D 手工装的，
+卸载请显式指定：`.\uninstall.ps1 -Profile web`。
+
 或按方式 B 反向操作：从 `package.json` 里删掉 `dsh-QingLanPierce` 依赖与 bundle 项 → `dsh plugin --profile <profile名> install` →
 删掉 `$DSH_HOME/plugins/dsh-QingLanPierce` 目录。
 
@@ -135,6 +142,13 @@ dsh plugin --profile web add "file:/绝对路径/dsh-QingLanPierce"
   历史遗留的 `disabled: true` 行**不会被本插件改动** —— 无法区分是谁写的，误改等于擅自打开你关掉的插件。
 - **数据只在本地**：`/qinglan-api` 只挂在宿主本机回环地址上；审计文件在 `$DSH_HOME/dsh-QingLanPierce/audit.jsonl`，
   可用 `qinglan_control { "action": "status" }` 的 `dataDir` 字段查到确切路径。
+- **控制接口只接受本机来源**：`/qinglan-api` 能读全量状态、写配置、切模型与会话开关，所以它在服务端逐请求校验：
+  - socket 对端地址必须是回环（`127.0.0.0/8`、`::1`、`::ffff:127.x`）—— 局域网主机、curl、脚本一律 403；
+  - `Host` 头必须解析成回环名 —— 挡 DNS rebinding（攻击者域名解析到 `127.0.0.1`，Origin 与 Host 会一致）；
+  - `Origin` 与 `content-type` 两道 CSRF 闸照旧保留。
+
+  宿主若监听在非回环地址（`0.0.0.0` / 局域网 IP），**整条路由不注册**，状态页 `channel.guard.skippedReason`
+  会写明原因。这不是"检测到就提醒"，是直接不开。
 
 ---
 
