@@ -1018,6 +1018,20 @@ window.__ModuleLoader__.load({
             checked: cfg.escapeRewrite !== false,
             onChange: function (v) { apply({ escapeRewrite: v }); },
           }),
+          h(Toggle, {
+            label: "每条用户消息末尾追加预算声明",
+            checked: cfg.budgetNote !== false,
+            onChange: function (v) { apply({ budgetNote: v }); },
+          }),
+          h(Row, {
+            k: "预算声明已追加",
+            v: (function () {
+              var b = (host && host.budget) || null;
+              if (!b) return "—";
+              if (b.enabled === false) return "已关闭";
+              return b.appended ? b.appended + " 轮" : "尚未触发";
+            })(),
+          }),
           h(Row, { k: "内置词表", v: status && status.escape ? status.escape.terms + " 条 / " + Object.keys(status.escape.byCategory || {}).length + " 类" : "—" }),
           h(Row, { k: "用户追加", v: cfg.triggerMap ? Object.keys(cfg.triggerMap).length + " 条" : "0 条" }),
           (function () {

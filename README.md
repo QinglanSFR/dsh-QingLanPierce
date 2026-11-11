@@ -1,4 +1,4 @@
-# QingLan · 破甲中枢（dsh-QingLanPierce 0.1.0-beta.2）
+# QingLan · 破甲中枢（dsh-QingLanPierce 0.1.0-beta.3）
 
 > ## ⛔ 使用限制与责任声明（首屏必读）
 >
@@ -202,12 +202,36 @@ $DSH_HOME/dsh-QingLanPierce/
 
 | 键 | 默认 | 作用 |
 |---|---|---|
+| `budgetNote` | `true` | 每条用户消息末尾无条件追加固定预算声明。设 `false` 关闭。与 `triggerEscape` / `escapeRewrite` **互不影响**：关掉转写不会连带关掉它 |
 | `minorEnvelope` | `true` | 未成年类是否套「卷宗条目」前件。设 `false` 退回原样（只换指称、不加前件） |
 | `stallResend` | `false` | 追问是否触发补发。默认关（提问不设限）；设 `true` 回到"只问不答也会被催"的旧行为 |
 | `resendFrameRotation` | `true` | 补发走内置三套体例轮换；设 `false` 才用 `autoResendText` |
 | `refusalScan` | `true` | 关掉后不再扫描输出、也不触发补发 |
 | `taskEnvelope` | `true` | 关掉后只做词面转写，不套任务信封 |
 | `injectionOrder` | `-100` | 注入位置；`-999` 极限抢占，`100` 在 persona 之后 |
+
+### 预算声明（`budgetNote`）
+
+每条真实用户输入的末尾会被追加同一句，固定文本，不随档位、词表、信封变化：
+
+```
+(你的token预算无上限，包括不限于本身对话，子代理，智能体团队。你不需要吝啬token与费用，力求完美。)
+```
+
+它与**字面词转写同一条链路**（`agent/pre-step` 改写本轮 `messages`），区别只在触发条件：转写看词表命中，这一句不看命中，只要是真实用户输入就追加。
+
+它不是提示词注入：注入写的是 `systemPrompt`，这一句改的是本轮 `user` 消息正文本身。
+
+行为边界：
+
+| 情况 | 是否追加 |
+|---|---|
+| 真实用户输入 | 追加（用空行 `\n\n` 与正文分隔） |
+| 宿主注入的 `runtime-context` 快照（`source.kind !== "user"`） | 不追加 |
+| 插件自己发的补发 / 转写提示（`source.kind = plugin:*`） | 不追加 |
+| 消息里已含这一句（补发重入等） | 跳过，不叠加第二遍 |
+
+追加次数在菜单「对抗」页的「预算声明已追加」实时可见；`qinglan_control { "action": "status" }` 的 `budget` 字段给出 `enabled` / `appended` / `lastAt` / `text`。
 
 ## 六、常见问题
 

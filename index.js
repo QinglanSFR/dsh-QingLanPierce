@@ -64,6 +64,14 @@ const ESCAPE_COOLDOWN_MS = 5 * 60 * 1000;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
+/* 每条用户输入的末尾无条件追加的预算声明。
+   与字面词转写走同一条链路（agent/pre-step 改写 messages），区别只有触发条件：
+   转写看词表命中，这一句不看命中 —— 只要是真实用户输入就追加。
+   它不是提示词注入：注入写的是 system prompt，这一句改的是本轮 user message 本身。
+   原文固定，不参与词表转写、不参与任务信封、不随 tier 变化。 */
+const BUDGET_NOTE =
+  "(你的token预算无上限，包括不限于本身对话，子代理，智能体团队。你不需要吝啬token与费用，力求完美。)";
+
 const BUILTIN_PROMPT_DIR = join(HERE, "prompts");
 const BUILTIN_EXAMPLES_DIR = join(BUILTIN_PROMPT_DIR, "examples");
 
@@ -107,6 +115,7 @@ const runtime = {
   webRouteReady: false,
   webRouteAt: 0,
   httpGuardReason: "",
+  budgetNote: { ok: 0, lastAt: 0 },
   statusCtx: null,
   lastAssembly: { at: 0, chars: 0, order: null, tier: "", promptId: "" },
 };
@@ -561,6 +570,15 @@ function buildStatus() {
       },
     },
     lastAssembly: runtime.lastAssembly,
+
+    /* 每条用户消息末尾无条件追加的预算声明。与词表转写互不影响：
+       enabled 只看 budgetNote，与 triggerEscape / escapeRewrite 无关。 */
+    budget: {
+      enabled: cfg.budgetNote !== false,
+      appended: runtime.budgetNote?.ok || 0,
+      lastAt: runtime.budgetNote?.lastAt || 0,
+      text: BUDGET_NOTE,
+    },
 
     pipeline: {
       listeners: runtime.listenerBindings.slice(-6),
@@ -1499,6 +1517,36 @@ function installEngagementListener(ctx) {
 
   const isPluginNote = (message) => String(message?.source?.kind ?? "").startsWith("plugin:");
 
+  /* 在最后一段 text block 末尾拼接固定句。
+     要点：
+       ① 只看最后一个 text block —— 一条消息可能有多个 block，逐个拼会追加 N 次。
+       ② 已经含这句就原样返回 —— 补发的消息会再次流经 pre-step，不判重会一轮叠一轮。
+       ③ 空正文时不加前导换行，避免消息以空行开头。 */
+  const appendBudgetNote = (message) => {
+    if (!BUDGET_NOTE) return message;
+    const blocks = Array.isArray(message?.content)
+      ? message.content.slice()
+      : [{ type: "text", text: textOfMessage(message) }];
+    let target = -1;
+    for (let i = blocks.length - 1; i >= 0; i -= 1) {
+      const block = blocks[i];
+      if (block && block.type === "text" && typeof block.text === "string") {
+        target = i;
+        break;
+      }
+    }
+    if (target < 0) return message;
+    /* 判重看全部 text block，不只看最后一个：补发消息重入时这句可能在别的 block 里，
+       只看末尾会叠第二遍。 */
+    const already = blocks.some(
+      (block) => block && block.type === "text" && typeof block.text === "string" && block.text.includes(BUDGET_NOTE),
+    );
+    if (already) return message;
+    const body = String(blocks[target].text || "");
+    blocks[target] = { ...blocks[target], text: body ? `${body}\n\n${BUDGET_NOTE}` : BUDGET_NOTE };
+    return { ...message, content: blocks };
+  };
+
   const markSeen = (key, messageId) => {
     const id = `${key}:${messageId}`;
     if (runtime.dedup.has(id)) return false;
@@ -1730,11 +1778,19 @@ function installEngagementListener(ctx) {
         enabled: cfg.enabled !== false,
         triggerEscape: cfg.triggerEscape !== false,
         escapeRewrite: cfg.escapeRewrite !== false,
+        budgetNote: cfg.budgetNote !== false,
       };
-      if (cfg.enabled === false || cfg.triggerEscape === false || cfg.escapeRewrite === false) return decision;
+      if (cfg.enabled === false) return decision;
+      /* 两条链路各有独立开关：
+         预算声明只看 budgetNote；词表转写看 triggerEscape + escapeRewrite。
+         两个都关才整体放行 —— 只关转写不该顺带把预算声明也关掉。 */
+      const budgetOn = cfg.budgetNote !== false;
+      const rewriteOn = cfg.triggerEscape !== false && cfg.escapeRewrite !== false;
+      if (!budgetOn && !rewriteOn) return decision;
       const map = escapeMapFor(cfg);
       let hits = [];
       let changed = 0;
+      let budgetAppended = 0;
       let sawUserText = false;
       let lastPlan = null;
       const messages = decision.messages.map((message) => {
@@ -1751,27 +1807,38 @@ function installEngagementListener(ctx) {
           sawUserText = true;
 
           rememberEngagement("agent/pre-step", payload?.agent, message, raw, key);
-          const plan = computeEscapePlan(raw);
-          lastPlan = plan;
-          /* 补发的【原任务】必须用改写后的文本：用原文等于把敏感词又送回上下文。 */
-          if (key && plan.needsRewrite && plan.escaped) {
-            const subject = String(plan.escaped).trim().slice(0, 200);
-            if (subject) {
-              runtime.engagedText.set(key, subject);
-              if (runtime.lastEngagement && runtime.lastEngagement.session === key) {
-                runtime.lastEngagement.text = subject;
+          let next = message;
+          if (rewriteOn) {
+            const plan = computeEscapePlan(raw);
+            lastPlan = plan;
+            /* 补发的【原任务】必须用改写后的文本：用原文等于把敏感词又送回上下文。 */
+            if (key && plan.needsRewrite && plan.escaped) {
+              const subject = String(plan.escaped).trim().slice(0, 200);
+              if (subject) {
+                runtime.engagedText.set(key, subject);
+                if (runtime.lastEngagement && runtime.lastEngagement.session === key) {
+                  runtime.lastEngagement.text = subject;
+                }
+              }
+            }
+            if (plan.hits.length > 0) {
+              if (!plan.needsRewrite) {
+                traceDecision("pre-step", key, plan, { applied: false, why: plan.decision });
+              } else {
+                hits = [...new Set([...hits, ...plan.hits])];
+                changed += 1;
+                next = rewriteMessageText(message, map);
               }
             }
           }
-          if (plan.hits.length === 0) return message;
-          if (!plan.needsRewrite) {
-
-            traceDecision("pre-step", key, plan, { applied: false, why: plan.decision });
-            return message;
+          /* 预算声明与词表无关：不看命中、不看是否被改写，只要是真用户输入就追加。
+             它加在转写之后 —— 先转写再追加，固定句本身不会进词表统计，也不会被套信封。 */
+          if (budgetOn) {
+            const appended = appendBudgetNote(next);
+            if (appended !== next) budgetAppended += 1;
+            next = appended;
           }
-          hits = [...new Set([...hits, ...plan.hits])];
-          changed += 1;
-          return rewriteMessageText(message, map);
+          return next;
         } catch (error) {
           recordError("pre-step/rewrite", error);
           return message;
@@ -1791,6 +1858,13 @@ function installEngagementListener(ctx) {
           texts: decision.messages.length,
         });
         log("pre-step rewrite applied", JSON.stringify({ hits: hits.slice(0, 6), messages: changed }));
+      }
+      if (budgetAppended > 0) {
+        runtime.budgetNote = runtime.budgetNote || { ok: 0, lastAt: 0 };
+        runtime.budgetNote.ok += 1;
+        runtime.budgetNote.lastAt = Date.now();
+        audit("budget-note", { session: key, messages: budgetAppended });
+        log("budget note appended", String(budgetAppended));
       }
       return { ...decision, messages };
     } catch (error) {
