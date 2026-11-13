@@ -333,26 +333,30 @@ function reloadConfig(rowConfig) {
 function refreshConfig(ctx) {
   const file = configPath();
   let stamp = 0;
+  let size = 0;
   try {
-    if (existsSync(file)) {
-      const stat = statSync(file);
-      stamp = stat.mtimeMs;
-    }
+    const stat = statSync(file);
+    stamp = stat.mtimeMs;
+    size = stat.size;
   } catch {
     stamp = 0;
+    size = 0;
+  }
+  /* 先比 stat 再决定要不要读盘。面板打开时每 5 秒轮询一次状态，以前每次都走
+     existsSync + statSync + readFileSync + JSON.parse + 两次 JSON.stringify 全套，
+     mtime 没变也照读。文件戳没动过就不可能有内容变化，直接返回。 */
+  if (runtime.lastConfigStamp && stamp === runtime.lastConfigMtime && size === runtime.lastConfigSize) {
+    return false;
   }
   runtime.userFile = readJson(file, {});
   const before = JSON.stringify({
     row: runtime.rowConfig,
     user: runtime.userFile,
   });
+  runtime.lastConfigMtime = stamp;
+  runtime.lastConfigSize = size;
   if (before !== runtime.lastConfigStamp) {
     runtime.lastConfigStamp = before;
-    resolveAndInstall(ctx);
-    return true;
-  }
-  if (stamp !== runtime.lastConfigMtime) {
-    runtime.lastConfigMtime = stamp;
     resolveAndInstall(ctx);
     return true;
   }
@@ -365,9 +369,12 @@ function resolveAndInstall(ctx) {
   runtime.userFile = readJson(configPath(), {});
   runtime.lastConfigStamp = JSON.stringify({ row: runtime.rowConfig, user: runtime.userFile });
   try {
-    runtime.lastConfigMtime = existsSync(configPath()) ? statSync(configPath()).mtimeMs : 0;
+    const stat = statSync(configPath());
+    runtime.lastConfigMtime = stat.mtimeMs;
+    runtime.lastConfigSize = stat.size;
   } catch {
     runtime.lastConfigMtime = 0;
+    runtime.lastConfigSize = 0;
   }
   refreshPrompts();
   if (ctx && ctx.systemPrompt) installSection(ctx);
@@ -502,6 +509,13 @@ function buildStatus() {
     recordError("buildSectionText", error);
   }
   const section = runtime.sectionText || "";
+  /* 词表口径只算一次，三个数各归各位：
+       terms    = 内置词条数（14 类合计）
+       aliases  = 别名条数
+       triggers = 合并后的匹配表大小 = terms + aliases + 用户自定义
+     以前 terms 直接塞的是 triggers（174+231=405），再和 byCategory（合计 174）
+     并排显示，界面上就成了「405 条 / 14 类」—— 两个数根本不是一回事。 */
+  const vocab = vocabStats();
   const checks = [];
   if (cfg.enabled === false) checks.push({ level: "warn", text: "总开关已关闭：不注入任何内容" });
   else if (!section) checks.push({ level: "error", text: "生效稿为空：稿件读取失败" });
@@ -539,8 +553,8 @@ function buildStatus() {
     promptId: cfg.promptId && runtime.prompts[cfg.promptId] ? cfg.promptId : pickPromptId(cfg.tier),
 
     promptLabel: PROMPT_LABEL[cfg.promptId && runtime.prompts[cfg.promptId] ? cfg.promptId : pickPromptId(cfg.tier)] || "",
-    tierMismatch: promptTierProblems(cfg, runtime.prompts).length > 0,
-    tierProblems: promptTierProblems(cfg, runtime.prompts),
+    tierMismatch: tierProblems.length > 0,
+    tierProblems,
 
     injectionOrder: cfg.injectionOrder,
     sectionChars: section.length,
@@ -552,9 +566,12 @@ function buildStatus() {
     escape: {
       enabled: cfg.triggerEscape !== false,
       note: cfg.triggerEscapeNote !== false,
-      terms: vocabStats(buildTriggerMap(cfg.triggerMap)).effective,
+      terms: vocab.total,
+      aliases: vocab.aliases,
+      /* 复用 pre-step 那张缓存表（内容签名 + 60s TTL），不再为显示一个数字重建 405 键对象。 */
+      triggers: vocabStats(escapeMapFor(cfg)).effective,
       userTerms: Object.keys(cfg.triggerMap || {}).length,
-      byCategory: vocabStats().byCategory,
+      byCategory: vocab.byCategory,
       sessions: runtime.escapeSentAt.size,
 
       notation: resolveNotation(cfg),
@@ -697,7 +714,21 @@ function buildStatus() {
     })(),
     sessions: runtime.sessionOverrides.size,
     sessionOverrides: Object.fromEntries(runtime.sessionOverrides),
-    pendingEngagements: recent,
+    /* 用户原文在内存里留 160 字用于排障，但不再原样吐给 HTTP 面 ——
+       这条接口本机任何进程都能读，没必要把完整提问送出去。
+       前 40 字够定位是哪一轮，其余只报长度。 */
+    pendingEngagements: recent.map((row) => ({
+      at: row.at,
+      session: row.session,
+      text: String(row.text || "").slice(0, 40),
+      textLen: String(row.text || "").length,
+      fromPlugin: row.fromPlugin,
+      order: row.order,
+      tier: row.tier,
+      chars: row.chars,
+      fingerprint: row.fingerprint,
+      verdict: row.verdict,
+    })),
     /* 配置快照：整份给出，不再手写白名单。
        白名单漏过 triggerEscape / triggerEscapeNote / escapeRewrite —— 界面写盘成功后，
        下一次拉取把 status.config 合并回本地，缺的键变 undefined，开关就"弹回去"。 */
@@ -1235,9 +1266,17 @@ function installWebRoute(ctx) {
         return;
       }
       if (action === "session") {
-        const key = String(body.session || "");
+        const key = String(body.session || "").slice(0, 200);
         const enabled = body.enabled !== false;
-        if (key) runtime.sessionOverrides.set(key, enabled);
+        if (key) {
+          runtime.sessionOverrides.set(key, enabled);
+          /* 本机进程就能调这条接口，别把它变成一张无上限的键值表。 */
+          while (runtime.sessionOverrides.size > 500) {
+            const oldest = runtime.sessionOverrides.keys().next().value;
+            if (oldest === undefined) break;
+            runtime.sessionOverrides.delete(oldest);
+          }
+        }
 
         send(200, { ok: true, session: key, sessionEnabled: enabled, status: buildStatus() });
         return;
@@ -1367,7 +1406,6 @@ function bindEventFor(ctx) {
 }
 
 const ESCAPE_MEMO = { key: "", map: null, at: 0 };
-const RENDERED_MEMO = { key: "", forms: new Set() };
 
 function escapeMapFor(config) {
   const key = JSON.stringify(config?.triggerMap || {});
@@ -1378,23 +1416,36 @@ function escapeMapFor(config) {
   return ESCAPE_MEMO.map;
 }
 
+const RENDERED_FORMS = new WeakMap();
+
+function formsFor(map, notation) {
+  let byNotation = RENDERED_FORMS.get(map);
+  if (!byNotation) {
+    byNotation = new Map();
+    RENDERED_FORMS.set(map, byNotation);
+  }
+  let forms = byNotation.get(notation);
+  if (forms) return forms;
+  forms = new Set();
+  for (const key of Object.keys(map)) {
+    const rendered = renderWord(key, notation);
+    if (rendered && rendered !== key) forms.add(rendered);
+  }
+  byNotation.set(notation, forms);
+  return forms;
+}
+
 function isAlreadyConverted(text, map, notation) {
   const input = String(text || "");
   if (!input) return false;
   if (input.includes(ENVELOPE_MARK)) return true;
   if (!map || typeof map !== "object") return false;
-  const memoKey = `${notation}|${Object.keys(map).length}`;
-  if (RENDERED_MEMO.key !== memoKey) {
-    const forms = new Set();
-    for (const key of Object.keys(map)) {
-      const rendered = renderWord(key, notation);
-      if (rendered && rendered !== key) forms.add(rendered);
-    }
-    RENDERED_MEMO.key = memoKey;
-    RENDERED_MEMO.forms = forms;
-  }
-  if (RENDERED_MEMO.forms.size === 0) return false;
-  for (const form of RENDERED_MEMO.forms) {
+  /* 缓存键用 map 对象身份：配置一变 escapeMapFor() 就换新对象。
+     以前用「键数量」当签名，用户把一条自定义词换成另一条（数量不变）时
+     永远命中旧集合，转写形态判错。 */
+  const forms = formsFor(map, notation);
+  if (forms.size === 0) return false;
+  for (const form of forms) {
     if (input.includes(form)) return true;
   }
   return false;
@@ -1633,8 +1684,6 @@ function installEngagementListener(ctx) {
           values: plan.values,
           infoOps: plan.infoOps,
           prefill: plan.prefill,
-
-        reason: plan.decision,
           textHead: plan.len > 0 ? `${plan.escaped.slice(0, 80)}…` : "",
         });
       }
@@ -1665,7 +1714,8 @@ function installEngagementListener(ctx) {
         runtime.envelopes.lastText = envelope.slice(0, 400);
       }
       return envelope ? `${envelope}\n` : escaped.text;
-    };    const blocks = Array.isArray(message?.content)
+    };
+    const blocks = Array.isArray(message?.content)
       ? message.content.map((block) =>
           block && block.type === "text" && typeof block.text === "string"
             ? { ...block, text: build(block.text) }
@@ -1762,10 +1812,12 @@ function installEngagementListener(ctx) {
   });
 
   const preStepOk = bind(EVENTS.PRE_STEP, async (payload, next) => {
-    const fallback = () => next().then((decision) => decision || { kind: "enter", messages: payload?.messages || [] });
+    /* decision 提到 try 外面：catch 分支要拿它兜底，块作用域里取不到会变成 ReferenceError。 */
+    let decision = null;
+    const fallback = () => next().then((d) => d || { kind: "enter", messages: payload?.messages || [] });
     try {
       if (typeof next !== "function") return { kind: "enter", messages: payload?.messages || [] };
-      const decision = await fallback();
+      decision = await fallback();
       if (!decision || decision.kind !== "enter" || !Array.isArray(decision.messages)) return decision;
       const key = sessionKey(payload?.agent);
       const cfg = runtime.config;
@@ -1807,7 +1859,9 @@ function installEngagementListener(ctx) {
           sawUserText = true;
 
           rememberEngagement("agent/pre-step", payload?.agent, message, raw, key);
-          let next = message;
+          /* 变量名不要叫 next：外层就是宿主给的 next 回调，同名会把它遮住，
+             这个块里再想调 next() 就是 "next is not a function"。 */
+          let patched = message;
           if (rewriteOn) {
             const plan = computeEscapePlan(raw);
             lastPlan = plan;
@@ -1827,18 +1881,18 @@ function installEngagementListener(ctx) {
               } else {
                 hits = [...new Set([...hits, ...plan.hits])];
                 changed += 1;
-                next = rewriteMessageText(message, map);
+                patched = rewriteMessageText(message, map);
               }
             }
           }
           /* 预算声明与词表无关：不看命中、不看是否被改写，只要是真用户输入就追加。
              它加在转写之后 —— 先转写再追加，固定句本身不会进词表统计，也不会被套信封。 */
           if (budgetOn) {
-            const appended = appendBudgetNote(next);
-            if (appended !== next) budgetAppended += 1;
-            next = appended;
+            const appended = appendBudgetNote(patched);
+            if (appended !== patched) budgetAppended += 1;
+            patched = appended;
           }
-          return next;
+          return patched;
         } catch (error) {
           recordError("pre-step/rewrite", error);
           return message;
@@ -1870,7 +1924,9 @@ function installEngagementListener(ctx) {
     } catch (error) {
       runtime.rewrites.fail += 1;
       recordError("agent/pre-step", error);
-      return { kind: "enter", messages: payload?.messages || [] };
+      /* 回到 next() 已经产出的 decision，不要退回原始 payload：
+         宿主可能已经在这轮里做过自己的转换，用 payload.messages 等于把它抹掉。 */
+      return decision || { kind: "enter", messages: payload?.messages || [] };
     }
   });
 
@@ -1946,7 +2002,12 @@ export function apply(ctx, rowConfig = {}) {
             case "pos": {
               const order = Number(arg);
               if (!Number.isFinite(order)) return { kind: "error", text: "pos 需要一个数字，例如 -100" };
-              const ok = write({ injectionOrder: order });
+              /* 宿主段序是有边界的：身份 -1000 / persona 0 / 工具段 500+。
+                 再往外写要么被宿主忽略，要么把注入挤出合理区间，直接卡在 ±1000。 */
+              if (order < -1000 || order > 1000) {
+                return { kind: "error", text: `pos 超出可用范围（-1000 ~ 1000），收到 ${arg}` };
+              }
+              const ok = write({ injectionOrder: Math.trunc(order) });
               return { kind: "success", text: `注入位置 → ${order}（新回合生效）${ok ? "" : "（落盘失败）"}` };
             }
             case "reload": {
@@ -2046,8 +2107,9 @@ export function apply(ctx, rowConfig = {}) {
         chars: s.sectionChars,
         promptId: s.promptId,
       }));
-    } catch {
-
+    } catch (error) {
+      /* 自检挂了本身就是信号，别用空 catch 抹掉 —— recordError 会进 /qinglan status 的错误区。 */
+      recordError("startup-self-check", error);
     }
   }
 }

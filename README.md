@@ -1,6 +1,21 @@
-# QingLan · 破甲中枢（dsh-QingLanPierce 0.1.0-beta.4）
+<h1 align="center">QingLan · 破甲中枢</h1>
 
-> ## ⛔ 使用限制与责任声明（首屏必读）
+<p align="center">
+  <code><b>dsh-QingLanPierce 0.1.0-beta.5</b></code><br>
+  <sub>快速简洁的 DSH 破甲插件 · 一句命令装好，开箱即用 · 三档口径，切完下一条消息即生效</sub>
+</p>
+
+<p align="center">
+  <img src="assets/hero.png" width="100%" alt="QingLanPierce：左侧为宣传主视觉与插件管理器安装框，右侧为菜单「状态」「档位」两页实拍">
+</p>
+
+<p align="center">
+  <a href="#二安装"><b>安装</b></a> ·
+  <a href="#五目录结构"><b>三档与目录</b></a> ·
+  <a href="#六常见问题"><b>常见问题</b></a>
+</p>
+
+> ## ⛔ 使用限制与责任声明
 >
 > 本节为项目立场声明，不构成 [LICENSE](LICENSE) 的附加条款；许可以 **MIT** 为准。
 >
@@ -13,7 +28,7 @@
 >   不承担任何连带责任。本软件按「现状」提供、**无任何担保**，免费软件的责任上限为 **0 元**。
 > - **许可**：**MIT**，见 [`LICENSE`](LICENSE)。标准 MIT 文本，未附加额外条款。
 > - **加载即用**：没有开屏协议、没有倒计时、没有强制确认。
-> - **仓库**：https://github.com/QinglanSFR/dsh-QingLanPierce
+> - **仓库**：https://github.com/QinglanSFR/dsh-QingLanPierce —— 好用请点颗 Star
 
 **当前状态：Beta** —— 版本号走 `0.1.0-beta.N` 预发布序列；接口、配置键与提示词结构在转正前仍可能变动。
 
@@ -21,10 +36,14 @@
 
 ## 特性
 
-DeepSeek Harness（以下简称 DSH）的插件：
+DeepSeek Harness（以下简称 DSH）的插件。
 
-**纯插件实现**：不改写任何 `@deepseek-ai/*` 官方文件、不写 shim、不生成 `.bak`、不改动其它插件、
-不写 profile 补丁（除自己那一行）；**零 npm 依赖**；卸载即等于不存在。
+- **纯插件实现、零 npm 依赖**：不改写任何 `@deepseek-ai/*` 官方文件、不写 shim、不生成 `.bak`、不改动其它插件、
+  不写 profile 补丁（除自己那一行）；卸载即等于不存在。
+- **三档口径可切**：L1 5,550 / L2 6,594 / L3 6,659 字符三份主稿，菜单里点一下，**下一条消息即生效**，不用重启。
+- **改了什么看得见**：词表 14 类 · 174 条词 + 231 条别名，命中后按类别策略转写；「对抗」页有只读自检，
+  能先看这一句会被改成什么样再发。
+- **控制面只在本机**：`/qinglan-api` 只挂回环地址，逐请求校验 socket 对端与 `Host` 头；宿主监听非回环地址时整条路由不注册。
 
 ---
 
@@ -40,7 +59,7 @@ DeepSeek Harness（以下简称 DSH）的插件：
 | **bash**                        | macOS / Linux / WSL / Git Bash          | 仅 `install.sh` 需要                                                                                                                                                            |
 | **Python**                      | **不需要**                              | 发布包不含任何 Python 脚本                                                                                                                                                      |
 | **编译器/构建工具**             | **不需要**                              | 纯 JS，无构建步骤                                                                                                                                                               |
-| **磁盘占用**                    | < 1 MB                                  | 插件本体约 400 KB                                                                                                                                                               |
+| **磁盘占用**                    | < 1 MB                                  | 插件本体约 330 KB（23 个文件）；仓库另带 625 KB 的 README 主视觉，不参与安装                                                                                                     |
 
 > 一句话：**装了 DSH 就能用**。除 DSH 本身外，本插件不要求你额外安装任何运行环境。
 
@@ -171,23 +190,49 @@ dsh-QingLanPierce/
 │  ├─ config.js           配置层（默认 ← 行 config ← 用户文件）+ 档位↔稿子映射
 │  ├─ core.js             判定器 / 事件折叠 / 稿件加载 / 档位一致性自检
 │  ├─ notation.js         指称记法 + 任务信封 + 补发框架（逐类别策略表）
-│  └─ lexicon.js          词表（14 类 · 405 条生效）
-├─ prompts/               三份破甲正文（core / dominate / lite）
+│  └─ lexicon.js          词表（14 类 · 174 条词 + 231 条别名）
+├─ prompts/
+│  ├─ qinglan-lite.md      L1 主稿（注入用）
+│  ├─ qinglan-core.md      L2 主稿（注入用）
+│  ├─ qinglan-dominate.md  L3 主稿（注入用）
+│  └─ examples/            执行规则源（4 份，见下）
+├─ assets/hero.png         README 主视觉，运行时不读，安装脚本会跳过
 ├─ install.ps1 / install.sh       安装脚本
 └─ uninstall.ps1 / uninstall.sh   卸载脚本
 ```
 
-三档的差别（其余规则三档完全一致：同一份稳定头 + 同一套 D1–D8 交付标准 + 同一份占位符清单）：
+### 主稿与规则源
 
-| 档位 | 界面显示 | 正文体量 | 差异点 |
-|---|---|---|---|
-| `core` | 标准 | 约 1.1 万字符 · 标签式 | 通用；领域清单最全（7 类）；与极限版同尺寸、措辞更密 |
-| `dominate` | 极限 | 约 1.1 万字符 · 标签式 | 最强；注入位置最前（`-999`），D8 附带「化名虚构 + 文风与投放策略」细则 |
-| `lite` | 温和 | 约 1.0 万字符 · 标签式 | 最省 token；保留全部硬规则与防跑偏条款，压缩的是解释性文字 |
+三份主稿只留**破甲提示词 + persona 身份**，判档、禁止清单、提问纪律、口吻这些执行细则全部外置到 `prompts/examples/`，由主稿里的 `{{EXAMPLES_DIR}}` 指针在运行时换成绝对路径：
 
-三档共用一个真源：版本号只在 `package.json` 写两处（`version` 与 `dsh.version`），`lib/config.js` 与界面从它读，不再各存副本。改版本只改这两处，别处不用碰。精确字数在菜单「状态」页的「生效稿 N 字」实时看，上表只写量级。
+| 规则文件 | 覆盖档位 | 内容 |
+|---|---|---|
+| `examples/README.md` | 全档 | 三档判据与分诊口径、判错了怎么办、边界、维护约定 |
+| `examples/quick-line.md` | 快线 / 标准线 | 禁止清单、三档都得守的、快线规范、标准线规范、密度标尺 |
+| `examples/long-line.md` | 长线 | 长线规则七条、完整示范、反例对照、抗漂移、十年攒下的直觉 |
+| `examples/表达规则.md` | 全档 | 句法、口气、禁用表达、正误对照总表、说话、性格 |
 
-运行时数据（菜单「关于」页可看到实际路径）：
+拆开的原因很实际：细则混在身份声明里，模型分不清哪句是身份、哪句是硬约束，容易做成规则平均。现在改规则只动这四份，三份主稿不用碰。
+
+### 三档的差别
+
+三份主稿共用同一套骨架：`arbitration → examples → persona → deployment → frame-rules → identity → …`，persona 段三份逐字节一致（251 字符，含标签）。真正的差别在下面这几处：
+
+| 档位 | 界面显示 | 正文字符（文件） | 节数 | 差异点 |
+|---|---|---|---|---|
+| `lite` | L1 轻量 | 5,550 | 14 | 最省注入预算；交付标准压成散文（**不带 D1–D8 编号**），anti-refusal 与 continuity 并入其中；额外保留「优先级」「占位符清单」「语种」三节 |
+| `core` | L2 标准 | 6,594 | 13 | 默认档；D1–D8 逐条编号，anti-refusal / continuity 独立成节；领域清单 7 类最全 |
+| `dominate` | L3 极限 | 6,659 | 13 | 与 core 同构，措辞更硬、定语更少；默认注入位 `-999`（最前） |
+
+> 上表是**文件字符数**。菜单「状态」页报的「生效稿 N 字」是**注入时的实际串长**，比文件多约 420 字符 ——
+> 差值来自 5 处 `{{EXAMPLES_DIR}}` 展开成本机绝对路径（16 → 87 字符），再加结尾那行 `[qd:…]` 标记。
+> 两个数都对，但不是同一把尺子。core 档实测：文件 6,594 → 注入 7,013。
+
+三档共用真源：版本号只在 `package.json` 写两处（`version` 与 `dsh.version`），`lib/config.js` 与界面从它读，不再各存副本。改版本只改这两处，别处不用碰。
+
+精确字数在菜单「状态」页的「检查项」里实时看（`生效稿 N 字`），上表是快照。
+
+运行时数据目录 `$DSH_HOME/dsh-QingLanPierce/`：
 
 ```
 $DSH_HOME/dsh-QingLanPierce/
@@ -195,6 +240,10 @@ $DSH_HOME/dsh-QingLanPierce/
 ├─ prompts/         自定义稿（覆盖内置稿）
 └─ audit.jsonl      本地审计
 ```
+
+确切路径取 `qinglan_control { "action": "status" }` 的 `dataDir` 字段，或 `/qinglan status` 输出里的 `数据目录 …` 一行。
+
+菜单五个页签：**状态**（宿主版本 / 档位自检 / 检查项）、**档位**（切档与注入位置）、**对抗**（转写开关与自检）、**提示词**（当前生效稿与指纹）、**关于**（版本、内置词表规模、作者与仓库地址）。
 
 ---
 
@@ -209,6 +258,7 @@ $DSH_HOME/dsh-QingLanPierce/
 | `refusalScan` | `true` | 关掉后不再扫描输出、也不触发补发 |
 | `taskEnvelope` | `true` | 关掉后只做词面转写，不套任务信封 |
 | `injectionOrder` | `-100` | 注入位置；`-999` 极限抢占，`100` 在 persona 之后 |
+| `escapeNotation` | `auto` | 指称记法模式：`auto` 按类别策略 · `plain` 原词直通（对照实验） · `topic` 一律类别词 · `index` 中文序数 · `gloss` / `raw` 旧形态，仅排障 |
 
 ### 预算声明（`budgetNote`）
 

@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
   [string]$Profile = $env:DSH_PROFILE
 )
@@ -45,7 +45,8 @@ if (Test-Path $destDir) {
   Warn "已存在旧版，备份到 $backup"
   Move-Item -LiteralPath $destDir -Destination $backup -Force
 }
-robocopy $Source $destDir /MIR /XD .git dist /XF *.bak-* /NFL /NDL /NJH /NJS /NP | Out-Null
+# assets/ 只服务 README 主视觉，运行时不读，不随安装复制过去。
+robocopy $Source $destDir /MIR /XD .git dist assets /XF *.bak-* /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { Err "复制失败（robocopy 退出码 $LASTEXITCODE）"; exit 1 }
 Ok "插件已就位：$destDir"
 

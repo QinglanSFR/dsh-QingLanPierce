@@ -102,6 +102,11 @@ window.__ModuleLoader__.load({
       ".ql-row .ql-k{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}",
       ".ql-row .ql-v{font-variant-numeric:tabular-nums;opacity:.9;}",
       ".ql-mute{opacity:.66;font-size:12px;}",
+      ".ql-link{display:inline-block;max-width:64%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;",
+      "color:var(--ql-accent,#38bdf8);text-decoration:none;",
+      "border-bottom:1px solid color-mix(in srgb,var(--ql-accent,#38bdf8) 45%,transparent);}",
+      ".ql-link:hover{border-bottom-color:var(--ql-accent,#38bdf8);}",
+      ".ql-star{display:inline-block;margin-top:8px;line-height:1.6;}",
       ".ql-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;}",
       ".ql-card{appearance:none;text-align:left;border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.3));border-radius:10px;padding:9px 11px;",
       "background:transparent;color:inherit;cursor:pointer;font:13px/1.5 inherit;}",
@@ -1032,7 +1037,12 @@ window.__ModuleLoader__.load({
               return b.appended ? b.appended + " 轮" : "尚未触发";
             })(),
           }),
-          h(Row, { k: "内置词表", v: status && status.escape ? status.escape.terms + " 条 / " + Object.keys(status.escape.byCategory || {}).length + " 类" : "—" }),
+          h(Row, {
+            k: "内置词表",
+            v: status && status.escape
+              ? status.escape.terms + " 条词 + " + (status.escape.aliases || 0) + " 别名 / " + Object.keys(status.escape.byCategory || {}).length + " 类"
+              : "—",
+          }),
           h(Row, { k: "用户追加", v: cfg.triggerMap ? Object.keys(cfg.triggerMap).length + " 条" : "0 条" }),
           (function () {
             var liveText = React.useState("");
@@ -1112,6 +1122,9 @@ window.__ModuleLoader__.load({
       );
     }
 
+    var REPO_URL = "https://github.com/QinglanSFR/dsh-QingLanPierce";
+    var AUTHOR_URL = "https://github.com/QinglanSFR";
+
     function AboutTab(props) {
       var status = props.status;
       return h(
@@ -1122,7 +1135,28 @@ window.__ModuleLoader__.load({
           { className: "ql-sec" },
           h("h4", null, brandName(status)),
           h(Row, { k: "版本", v: status ? String(status.version) : "未装载" }),
-          h(Row, { k: "内置词表", v: status && status.escape ? status.escape.terms + " 条 / " + Object.keys(status.escape.byCategory || {}).length + " 类" : "—" }),
+          h(Row, {
+            k: "内置词表",
+            v: status && status.escape
+              ? status.escape.terms + " 条词 + " + (status.escape.aliases || 0) + " 别名 / " + Object.keys(status.escape.byCategory || {}).length + " 类"
+              : "—",
+          }),
+        ),
+        h(
+          "div",
+          { className: "ql-sec" },
+          h("h4", null, "作者与仓库"),
+          h(
+            Row,
+            { k: "作者" },
+            h("a", { className: "ql-link", href: AUTHOR_URL, title: "GitHub：" + AUTHOR_URL, target: "_blank", rel: "noopener noreferrer" }, "QinglanSFR"),
+          ),
+          h(
+            Row,
+            { k: "仓库地址" },
+            h("a", { className: "ql-link", href: REPO_URL, title: REPO_URL, target: "_blank", rel: "noopener noreferrer" }, REPO_URL),
+          ),
+          h("div", { className: "ql-mute ql-star" }, "如果好用请前往我的仓库点颗Star"),
         ),
       );
     }
