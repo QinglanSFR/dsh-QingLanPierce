@@ -1,4 +1,4 @@
-# QingLan · 破甲中枢（dsh-QingLanPierce 0.1.0-beta.3）
+# QingLan · 破甲中枢（dsh-QingLanPierce 0.1.0-beta.4）
 
 > ## ⛔ 使用限制与责任声明（首屏必读）
 >
