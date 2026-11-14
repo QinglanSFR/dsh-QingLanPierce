@@ -1,12 +1,13 @@
 import { appendFileSync, existsSync, readdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { networkInterfaces } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
   DEFAULTS,
   PLUGIN_ID,
   PLUGIN_NAME,
+  TIER_PROMPT,
   VERSION,
   auditPath,
   configPath,
@@ -32,6 +33,7 @@ import {
   escapeText,
   fingerprint,
   foldEvent,
+  hasRenderedForm,
   initialState,
   loadPromptTexts,
   pickPromptId,
@@ -47,12 +49,11 @@ import {
   aliasSubstringProblems as lexiconAliasSubstringProblems,
   notationProblems as lexiconNotationProblems,
   notationTable,
-  renderWord,
   tokenPrefixProblems as lexiconTokenPrefixProblems,
 } from "./lib/lexicon.js";
 export const name = PLUGIN_ID;
 
-export const inject = ["systemPrompt", "tools", "commands", "webServer", "sessionProjections"];
+export const inject = ["systemPrompt", "tools"];
 
 const EVENTS = {
   INBOX_INSERTED: "agent/inbox/inserted",
@@ -162,7 +163,7 @@ function noteEngagement(ctx, agent, text, fromPlugin = false) {
 }
 
 function deliverToSession(ctx, payloadAgent, session, message) {
-  const agents = ctx.get("agents");
+  const agents = serviceOf(ctx, "agents");
   let target = undefined;
   if (agents && typeof agents.get === "function" && session) {
     try {
@@ -175,6 +176,18 @@ function deliverToSession(ctx, payloadAgent, session, message) {
   if (!chosen || typeof chosen.followup !== "function") return { ok: false, via: "" };
   chosen.followup(message);
   return { ok: true, via: target ? "agents.get" : "payload" };
+}
+
+/* 取可选服务。宿主的 ctx 一定有 get()，但单元测试桩、别的宿主实现里未必 ——
+   一次 TypeError 就会把 apply() 打断，整个插件静默不加载。统一走这里兜一下。 */
+function serviceOf(ctx, name) {
+  try {
+    if (!ctx) return undefined;
+    if (typeof ctx.get === "function") return ctx.get(name);
+    return ctx[name];
+  } catch {
+    return undefined;
+  }
 }
 
 function log(...args) {
@@ -330,7 +343,7 @@ function reloadConfig(rowConfig) {
   return runtime.config;
 }
 
-function refreshConfig(ctx) {
+function refreshConfig(ctx, force = false) {
   const file = configPath();
   let stamp = 0;
   let size = 0;
@@ -344,8 +357,9 @@ function refreshConfig(ctx) {
   }
   /* 先比 stat 再决定要不要读盘。面板打开时每 5 秒轮询一次状态，以前每次都走
      existsSync + statSync + readFileSync + JSON.parse + 两次 JSON.stringify 全套，
-     mtime 没变也照读。文件戳没动过就不可能有内容变化，直接返回。 */
-  if (runtime.lastConfigStamp && stamp === runtime.lastConfigMtime && size === runtime.lastConfigSize) {
+     mtime 没变也照读。文件戳没动过就不可能有内容变化，直接返回。
+     force=true（客户端重试时带 body.force）跳过这道短路，强制重读一遍。 */
+  if (!force && runtime.lastConfigStamp && stamp === runtime.lastConfigMtime && size === runtime.lastConfigSize) {
     return false;
   }
   runtime.userFile = readJson(file, {});
@@ -402,6 +416,9 @@ function cfgAllowsNote() {
 }
 
 const ENVELOPE_MARK = "【任务信封】";
+/* 信封里「操作者原话」的分隔行。信封是你已经套好的，但原话本身可能还带原词 ——
+   收到用户粘贴回来的信封时，只转写分隔行之后那一段，既不重复套信封，也不放弃转写。 */
+const ENVELOPE_BODY_MARK = "── 操作者原话 ──";
 
 /* 提示词里的 {{EXAMPLES_DIR}} 是运行时占位符：模型拿不到插件的相对路径，
    必须在注入前换成本机绝对路径，否则「回答前先读示例」这条硬指针等于没写。
@@ -419,7 +436,14 @@ function examplesDirFor() {
 
 function applyExamplesDir(text) {
   if (typeof text !== "string" || !text.includes("{{EXAMPLES_DIR}}")) return text;
-  return text.split("{{EXAMPLES_DIR}}").join(examplesDirFor());
+  const dir = examplesDirFor();
+  /* 稿子里写的是 {{EXAMPLES_DIR}}/xxx —— 用正斜杠，跨平台都能表达同一个意思。
+     替换时要换成宿主平台的分隔符：Windows 上 examplesDirFor() 自带反斜杠，
+     直接接 "/" 会拼出 `C:\a\examples/b.md` 这种混合形式。能读，但模型看到的
+     路径不干净，排障时容易误判成插件拼错了。 */
+  return text
+    .replace(/\{\{EXAMPLES_DIR\}\}[\\/]/g, `${dir}${sep}`)
+    .replace(/\{\{EXAMPLES_DIR\}\}/g, dir);
 }
 
 
@@ -510,11 +534,11 @@ function buildStatus() {
   }
   const section = runtime.sectionText || "";
   /* 词表口径只算一次，三个数各归各位：
-       terms    = 内置词条数（14 类合计）
+       terms    = 内置词条数（13 类合计）
        aliases  = 别名条数
        triggers = 合并后的匹配表大小 = terms + aliases + 用户自定义
-     以前 terms 直接塞的是 triggers（174+231=405），再和 byCategory（合计 174）
-     并排显示，界面上就成了「405 条 / 14 类」—— 两个数根本不是一回事。 */
+     以前 terms 直接塞的是 triggers（173+231=404），再和 byCategory（合计 173）
+     并排显示，界面上就成了「404 条 / 13 类」—— 两个数根本不是一回事。 */
   const vocab = vocabStats();
   const checks = [];
   if (cfg.enabled === false) checks.push({ level: "warn", text: "总开关已关闭：不注入任何内容" });
@@ -568,7 +592,7 @@ function buildStatus() {
       note: cfg.triggerEscapeNote !== false,
       terms: vocab.total,
       aliases: vocab.aliases,
-      /* 复用 pre-step 那张缓存表（内容签名 + 60s TTL），不再为显示一个数字重建 405 键对象。 */
+      /* 复用 pre-step 那张缓存表（内容签名 + 60s TTL），不再为显示一个数字重建 404 键对象。 */
       triggers: vocabStats(escapeMapFor(cfg)).effective,
       userTerms: Object.keys(cfg.triggerMap || {}).length,
       byCategory: vocab.byCategory,
@@ -654,7 +678,7 @@ function buildStatus() {
         let hostSource = "";
         const liveCtx = runtime.statusCtx || null;
         try {
-          const ws = liveCtx ? liveCtx.get("webServer") : null;
+          const ws = serviceOf(liveCtx, "webServer");
           if (ws && typeof ws.server?.address === "function") {
             const addr = ws.server.address();
             if (addr && typeof addr === "object" && typeof addr.address === "string") {
@@ -679,7 +703,7 @@ function buildStatus() {
 
         let port = null;
         try {
-          const ws = liveCtx ? liveCtx.get("webServer") : null;
+          const ws = serviceOf(liveCtx, "webServer");
           const p = ws && (typeof ws.port === "number" ? ws.port : ws.listenedPort);
           if (typeof p === "number" && p > 0) port = p;
         } catch {
@@ -749,6 +773,50 @@ function buildStatus() {
   };
 }
 
+/* 档位（tier）与稿子（promptId）是两套真源：tier 决定界面显示，promptId 决定实际注入哪份稿。
+   面板过去自己拼 `"qinglan-" + tier`，extreme 拼成 `qinglan-extreme` 这个不存在的 id，
+   被 resolveConfig 打回 qinglan-core —— 于是 L3 从上线起就没生效过。
+   现在所有写入路径统一走这里：给了合法 tier 就由它定稿，给了 promptId 就反推 tier，
+   两个键永远成对出现，不再各写各的。 */
+const TIER_BY_PROMPT = Object.fromEntries(Object.entries(TIER_PROMPT).map(([tier, promptId]) => [promptId, tier]));
+
+function normalizeConfigPatch(patch) {
+  const next = { ...(patch || {}) };
+  const has = (key) => Object.prototype.hasOwnProperty.call(next, key);
+
+  if (has("tier")) {
+    const tier = String(next.tier ?? "");
+    if (!TIER_PROMPT[tier]) {
+      return { error: `tier 只接受 ${Object.keys(TIER_PROMPT).join(" | ")}，收到 ${JSON.stringify(next.tier)}` };
+    }
+    /* 两个键同时给且指向不同档位 → 拒绝，不要"以谁为准"的隐式规则。
+       以前这里会默默让 tier 赢，落盘后 tier=promptId 对不上，界面报档位不一致。 */
+    if (next.promptId && TIER_BY_PROMPT[next.promptId] && TIER_BY_PROMPT[next.promptId] !== tier) {
+      return { error: `tier=${tier} 与 promptId=${next.promptId} 不是同一档（${TIER_BY_PROMPT[next.promptId]}）；只给其中一个即可` };
+    }
+    if (!next.promptId) next.promptId = pickPromptId(tier);
+  }
+  if (has("promptId") && next.promptId) {
+    if (!TIER_BY_PROMPT[next.promptId]) {
+      return { error: `promptId 只接受 ${Object.values(TIER_PROMPT).join(" | ")}，收到 ${JSON.stringify(next.promptId)}` };
+    }
+    if (!has("tier") || !next.tier) next.tier = TIER_BY_PROMPT[next.promptId];
+  }
+  if (has("injectionOrder")) {
+    /* 只接受真正的数字与十进制数字串。Number() 会把 null→0、true→1、"0x10"→16 悄悄吃下来，
+       写进去就是把注入挪到 persona 位或工具段 —— 静默的比报错难查得多。 */
+    const raw = next.injectionOrder;
+    const numeric = typeof raw === "number" || (typeof raw === "string" && raw.trim() !== "" && Number.isFinite(Number(raw)));
+    const order = numeric ? Number(raw) : NaN;
+    if (!Number.isFinite(order)) return { error: "injectionOrder 需要一个数字，例如 -100" };
+    if (order < -1000 || order > 1000) {
+      return { error: `injectionOrder 超出可用范围（-1000 ~ 1000），收到 ${JSON.stringify(raw)}` };
+    }
+    next.injectionOrder = Math.trunc(order);
+  }
+  return { patch: next };
+}
+
 function makeControlTool(ctx, deps) {
   return {
     name: "qinglan_control",
@@ -782,7 +850,10 @@ function makeControlTool(ctx, deps) {
         return { ok: true, ...buildStatus() };
       }
       if (action === "config") {
-        const patch = args?.patch && typeof args.patch === "object" ? args.patch : {};
+        const raw = args?.patch && typeof args.patch === "object" ? args.patch : {};
+        const normalized = normalizeConfigPatch(raw);
+        if (normalized.error) return { ok: false, error: normalized.error };
+        const patch = normalized.patch;
         const saved = persistConfig(patch, runtime.userFile || {});
         runtime.userFile = saved.config;
         reloadConfig(runtime.rowConfig);
@@ -1013,7 +1084,7 @@ function installRefusalResend(ctx) {
 
 function readModelSelection(ctx) {
   try {
-    const service = ctx.get("agentDefaultModel");
+    const service = serviceOf(ctx, "agentDefaultModel");
     if (!service || typeof service.currentSelection !== "function") return null;
     const current = service.currentSelection();
     if (!current || typeof current !== "object") return null;
@@ -1034,7 +1105,7 @@ function statusModelSelection(ctx) {
 }
 
 async function applyModelSelection(ctx, patch) {
-  const service = ctx.get("agentDefaultModel");
+  const service = serviceOf(ctx, "agentDefaultModel");
   if (!service || typeof service.saveSelection !== "function") {
     return { ok: false, error: "agentDefaultModel service unavailable" };
   }
@@ -1115,7 +1186,7 @@ function isLoopbackHostHeader(value) {
    由请求级校验兜底 —— 不能在启动顺序上赌运气，赌错就是整条控制面消失。 */
 function serverBindingLoopback(ctx) {
   try {
-    const ws = ctx.get("webServer");
+    const ws = serviceOf(ctx, "webServer");
     const addr = ws && typeof ws.server?.address === "function" ? ws.server.address() : null;
     if (addr && typeof addr === "object" && typeof addr.address === "string" && addr.address) {
       return { known: true, host: addr.address, loopback: isLoopbackAddress(addr.address) };
@@ -1127,7 +1198,7 @@ function serverBindingLoopback(ctx) {
 }
 
 function installWebRoute(ctx) {
-  const server = ctx.get("webServer");
+  const server = serviceOf(ctx, "webServer");
   if (!server || typeof server.register !== "function") {
 
     runtime.webRouteReady = false;
@@ -1247,7 +1318,7 @@ function installWebRoute(ctx) {
       const action = String(body.action || "status");
 
       if (action === "status") {
-        refreshConfig(ctx);
+        refreshConfig(ctx, body.force === true);
         send(200, { ok: true, status: buildStatus() });
         return;
       }
@@ -1287,7 +1358,14 @@ function installWebRoute(ctx) {
         return;
       }
       if (action === "config") {
-        const patch = body.patch && typeof body.patch === "object" ? body.patch : {};
+        const raw = body.patch && typeof body.patch === "object" ? body.patch : {};
+        const normalized = normalizeConfigPatch(raw);
+        if (normalized.error) {
+          audit("config-reject", { patch: raw, why: normalized.error });
+          send(400, { ok: false, error: normalized.error, status: buildStatus() });
+          return;
+        }
+        const patch = normalized.patch;
         const saved = persistConfig(patch, runtime.userFile || {});
         resolveAndInstall(ctx);
         audit("config", { patch, write: body._write });
@@ -1416,39 +1494,16 @@ function escapeMapFor(config) {
   return ESCAPE_MEMO.map;
 }
 
-const RENDERED_FORMS = new WeakMap();
-
-function formsFor(map, notation) {
-  let byNotation = RENDERED_FORMS.get(map);
-  if (!byNotation) {
-    byNotation = new Map();
-    RENDERED_FORMS.set(map, byNotation);
-  }
-  let forms = byNotation.get(notation);
-  if (forms) return forms;
-  forms = new Set();
-  for (const key of Object.keys(map)) {
-    const rendered = renderWord(key, notation);
-    if (rendered && rendered !== key) forms.add(rendered);
-  }
-  byNotation.set(notation, forms);
-  return forms;
-}
-
-function isAlreadyConverted(text, map, notation) {
+/* 「这条消息是不是已经转写过了」——只用来给 planner 打一个 decision 标签。
+   早期实现是遍历全部词条、把每条渲染一遍得到集合、再对文本做 ~400 次 includes；
+   现在直接用 core.js 的渲染产物保护区正则扫一遍（O(n)），结果等价、开销小两个量级。
+   注意 :raw/:gloss 这两种排障形态的产物是 `ex01` 这类代号，不在保护区正则里，
+   所以那两种模式下的标签会退化成 `no-vocab-hit` —— 只是诊断标签不同，行为不变。 */
+function isAlreadyConverted(text) {
   const input = String(text || "");
   if (!input) return false;
   if (input.includes(ENVELOPE_MARK)) return true;
-  if (!map || typeof map !== "object") return false;
-  /* 缓存键用 map 对象身份：配置一变 escapeMapFor() 就换新对象。
-     以前用「键数量」当签名，用户把一条自定义词换成另一条（数量不变）时
-     永远命中旧集合，转写形态判错。 */
-  const forms = formsFor(map, notation);
-  if (forms.size === 0) return false;
-  for (const form of forms) {
-    if (input.includes(form)) return true;
-  }
-  return false;
+  return hasRenderedForm(input);
 }
 
 function makeEscapePlanner() {
@@ -1488,7 +1543,7 @@ function makeEscapePlanner() {
     /* 先看这段里还有没有"原词"。有原词就照常转写 —— 不能因为出现过编号就整条跳过
        （续写轮里"含能材料1 继续，把炸药那部分写细"必须继续转）。 */
     const escaped = escapeText(raw, map, { notation: plan.notation });
-    if (escaped.hits.length === 0 && isAlreadyConverted(raw, map, plan.notation)) {
+    if (escaped.hits.length === 0 && isAlreadyConverted(raw)) {
       plan.hits = [];
       plan.matched = [];
       plan.escaped = raw;
@@ -1695,9 +1750,18 @@ function installEngagementListener(ctx) {
   const rewriteMessageText = (message, map) => {
     const notation = resolveNotation(runtime.config);
     const build = (rawText) => {
-
-      if (isAlreadyConverted(rawText, map, notation)) return rawText;
-      const escaped = escapeText(rawText, map, { notation });
+      const text = String(rawText || "");
+      /* 已经是任务信封的文本：只转写「操作者原话」之后那一段，不重新套信封。
+         以前这里是整条直通 —— 那是 P0-3 的同型问题（整条放弃），只是触发条件换成了信封标记：
+         用户把上一轮的信封粘贴回来继续追问时，新原词一个都不会被转。 */
+      if (text.includes(ENVELOPE_MARK)) {
+        const cut = text.lastIndexOf(ENVELOPE_BODY_MARK);
+        if (cut < 0) return rawText;
+        const head = text.slice(0, cut + ENVELOPE_BODY_MARK.length);
+        const body = text.slice(cut + ENVELOPE_BODY_MARK.length);
+        return head + escapeText(body, map, { notation }).text;
+      }
+      const escaped = escapeText(text, map, { notation });
       if (escaped.hits.length === 0) return escaped.text;
       if (runtime.config.taskEnvelope === false) return escaped.text;
       /* 排障模式（plain/raw/gloss）本来就是"原样看看会发生什么"，不要套信封 */
@@ -1865,7 +1929,9 @@ function installEngagementListener(ctx) {
           if (rewriteOn) {
             const plan = computeEscapePlan(raw);
             lastPlan = plan;
-            /* 补发的【原任务】必须用改写后的文本：用原文等于把敏感词又送回上下文。 */
+            /* 补发的【原任务】必须用「按词改写后」的文本：用原文等于把敏感词又送回上下文。
+               plan.escaped 现在和真正发出去的那段一致 —— escapeText 有渲染产物保护区，
+               对已经含渲染形态的消息不会再二次膨胀。 */
             if (key && plan.needsRewrite && plan.escaped) {
               const subject = String(plan.escaped).trim().slice(0, 200);
               if (subject) {
@@ -1880,8 +1946,10 @@ function installEngagementListener(ctx) {
                 traceDecision("pre-step", key, plan, { applied: false, why: plan.decision });
               } else {
                 hits = [...new Set([...hits, ...plan.hits])];
-                changed += 1;
                 patched = rewriteMessageText(message, map);
+                /* 只统计「真改了」的：转写开关开着、命中了、但渲染形态与原文相同的
+                   （例如 passthrough 类里的 cyber）不该计进改写次数。 */
+                if (textOfMessage(patched) !== raw) changed += 1;
               }
             }
           }
@@ -1952,14 +2020,14 @@ export function apply(ctx, rowConfig = {}) {
     installSection(ctx);
   };
 
-  const controlTool = makeControlTool(ctx, { currentAgent: () => ctx.get("agents")?.currentInitiator?.() });
+  const controlTool = makeControlTool(ctx, { currentAgent: () => serviceOf(ctx, "agents")?.currentInitiator?.() });
   ctx.effect(() => ctx.tools.register(controlTool));
   ctx.effect(() => ctx.tools.register(makeDoctorTool()));
 
-  const commands = ctx.get("commands") || (ctx.commands && typeof ctx.commands.register === "function" ? ctx.commands : undefined);
-  if (commands && typeof commands.register === "function") {
-    ctx.effect(() =>
-      commands.register({
+  /* 命令注册：commands 不是必需服务（headless / SDK 部署可能没有它），所以先取，
+     取不到就用 ctx.inject 等它出现。以前 commands 写在 inject 数组里 —— 宿主没提供时
+     整个 apply 都不会执行：注入、工具、HTTP 面一起静默消失，连日志都没有。 */
+  const commandSpec = {
         name: "qinglan",
         description: `${PLUGIN_NAME}：status | on | off | tier <lite|standard|extreme> | pos <-999|-100|100> | reload`,
         input: { hint: "status | on | off | tier <lite|standard|extreme> | pos <-999|-100|100> | reload" },
@@ -2019,9 +2087,14 @@ export function apply(ctx, rowConfig = {}) {
               return { kind: "error", text: "用法：/qinglan status|on|off|tier <...>|pos <数字>|reload" };
           }
         },
-      }),
-    );
-  }
+  };
+  const installCommands = (registry) => {
+    if (!registry || typeof registry.register !== "function") return;
+    ctx.effect(() => registry.register(commandSpec));
+  };
+  const commands = serviceOf(ctx, "commands") || (ctx.commands && typeof ctx.commands.register === "function" ? ctx.commands : undefined);
+  if (commands) installCommands(commands);
+  else if (typeof ctx.inject === "function") ctx.inject(["commands"], (inner) => installCommands(inner.get("commands")));
 
   const badgeSnapshot = () => ({
     enabled: runtime.config.enabled !== false,
@@ -2071,7 +2144,7 @@ export function apply(ctx, rowConfig = {}) {
       }),
     );
   };
-  const projections = ctx.get("sessionProjections");
+  const projections = serviceOf(ctx, "sessionProjections");
   if (projections !== undefined) registerProjection(projections);
   else if (typeof ctx.inject === "function") {
     ctx.inject(["sessionProjections"], (inner) => registerProjection(inner.get("sessionProjections")));

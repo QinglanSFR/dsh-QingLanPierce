@@ -1,6 +1,6 @@
 # prompts/examples —— 规则总纲
 
-**这四份文件是唯一的执行规则源。**三档主稿（`qinglan-lite` / `qinglan-core` / `qinglan-dominate`）的 `<persona>` 只保留身份，不再重复任何一条执行细则；判档、禁止项、提问纪律、计划、STATE.md、口吻，全部以这里为准。
+**这四份文件是执行细则的唯一规则源。**三档主稿（`qinglan-lite` / `qinglan-core` / `qinglan-dominate`）的 `<persona>` 只保留身份，不再重复任何一条执行细则；判档、禁止项、提问纪律、计划、STATE.md、口吻，全部以这里为准。**与主稿 arbitration 节的定性冲突时，以 arbitration 节为准**（那一节管的是"冲突怎么裁"，本目录管的是"细则怎么写"）。
 
 ## 文件
 

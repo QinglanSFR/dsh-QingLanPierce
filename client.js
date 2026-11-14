@@ -6,6 +6,7 @@ window.__ModuleLoader__.load({
 
     var API = "/qinglan-api";
     var STYLE_ID = "qinglan-style";
+    var STYLE_VERSION = "qinglan-style-v1";
     var LS_KEY = "dsh-QingLanPierce-ui";
     var BOOT_AT = Date.now();
 
@@ -136,12 +137,14 @@ window.__ModuleLoader__.load({
 
     function useStyleOnce() {
       React.useEffect(function () {
-        var tag = document.getElementById(STYLE_ID);
-        if (tag) return undefined;
+        var old = document.getElementById(STYLE_ID);
+        if (old && old.getAttribute("data-version") === STYLE_VERSION) return undefined;
         var el = document.createElement("style");
         el.id = STYLE_ID;
+        el.setAttribute("data-version", STYLE_VERSION);
         el.textContent = CSS;
-        document.head.appendChild(el);
+        if (old && old.parentNode) old.parentNode.replaceChild(el, old);
+        else document.head.appendChild(el);
         return undefined;
       }, []);
     }
@@ -195,7 +198,6 @@ window.__ModuleLoader__.load({
     function setRemoteStatus(status) {
       if (!status || typeof status !== "object") return;
 
-      remoteBus.rev += 1;
       remoteBus.status = status;
       remoteBus.listeners.forEach(function (fn) {
         try {
@@ -222,13 +224,36 @@ window.__ModuleLoader__.load({
       if (options && options.force) body.force = true;
       remoteBus.reqSeq += 1;
       var seq = remoteBus.reqSeq;
-      return fetch(API, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-      })
-        .then(function (res) {
 
+      // 宿主或网络挂起时不能把 busy 钉死：8 秒后主动 abort，走同一条失败路径。
+      // 不用 AbortSignal.timeout（旧 Electron 可能没有），成功后也要 clearTimeout。
+      var controller = typeof AbortController === "function" ? new AbortController() : null;
+      var timer = 0;
+      if (controller) {
+        timer = window.setTimeout(function () {
+          controller.abort();
+        }, 8000);
+      }
+      var settled = function () {
+        if (!timer) return;
+        window.clearTimeout(timer);
+        timer = 0;
+      };
+
+      var pending;
+      try {
+        pending = fetch(API, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+          signal: controller ? controller.signal : undefined,
+        });
+      } catch (error) {
+        settled();
+        return Promise.resolve({ ok: false, error: String((error && error.message) || error) });
+      }
+      return pending
+        .then(function (res) {
           var type = String((res.headers && res.headers.get && res.headers.get("content-type")) || "");
           if (!res.ok && type.indexOf("json") === -1) {
             return res.text().then(function (bodyText) {
@@ -238,6 +263,7 @@ window.__ModuleLoader__.load({
           return res.json();
         })
         .then(function (json) {
+          settled();
           var fresh = seq >= remoteBus.appliedSeq;
           if (fresh) remoteBus.appliedSeq = seq;
 
@@ -248,12 +274,12 @@ window.__ModuleLoader__.load({
           return json;
         })
         .catch(function (error) {
-          var result = { ok: false, error: String((error && error.message) || error) };
-          if (seq > remoteBus.appliedSeq) {
-            result._stale = remoteBus.appliedSeq < seq;
-            result._seq = seq;
-          }
-          return result;
+          settled();
+          var aborted = !!(error && error.name === "AbortError");
+          return {
+            ok: false,
+            error: aborted ? "请求超时（8 秒）" : String((error && error.message) || error),
+          };
         });
     }
 
@@ -271,6 +297,10 @@ window.__ModuleLoader__.load({
         swallow("report-payload", e);
       }
       out.swallowed = swallowRecent();
+      // 后端 client-report 分支读的是 why / events；之前只发 trigger / swallowed，
+      // 服务端日志永远是 undefined。这里只做加法，原有字段一个不动。
+      out.why = String(trigger || "");
+      out.events = swallowRecent();
       return out;
     }
 
@@ -372,7 +402,6 @@ window.__ModuleLoader__.load({
       lastLocalWriteAt: 0,
       lastAcceptedAt: 0,
       writeTimer: 0,
-      itemTimer: 0,
       pollTimer: 0,
       pullTimer: 0,
       pending: null,
@@ -503,7 +532,7 @@ window.__ModuleLoader__.load({
               cfgStore.lastAcceptedAt = Date.now();
               if (cfgStore.localSeq === id) {
 
-                cfgStore.value = Object.assign({}, json.status.config, bodyPatch);
+                cfgStore.value = Object.assign({}, json.status.config);
                 cfgNotify();
               }
             }
@@ -520,6 +549,7 @@ window.__ModuleLoader__.load({
           }
           cfgStore.busy = false;
           cfgStore.failures += 1;
+          cfgStore.pending = null;
           cfgStore.lastResult = { at: Date.now(), patch: bodyPatch, ok: false, error: cfgStore.lastError, write: id };
           cfgStore.value = Object.assign({}, cfgStore.serverCfg || cfgStore.value || {});
           cfgNotify();
@@ -539,14 +569,6 @@ window.__ModuleLoader__.load({
       cfgSchedule({ items: patch || {} });
     }
 
-    function cfgApplyLater(patch, delay) {
-      if (cfgStore.itemTimer) window.clearTimeout(cfgStore.itemTimer);
-      cfgStore.itemTimer = window.setTimeout(function () {
-        cfgStore.itemTimer = 0;
-        cfgApply(patch);
-      }, delay || 600);
-    }
-
     function cfgRefresh(delay) {
       if (cfgStore.pullTimer) window.clearTimeout(cfgStore.pullTimer);
       cfgStore.pullTimer = window.setTimeout(function () {
@@ -557,7 +579,7 @@ window.__ModuleLoader__.load({
 
     function cfgPullOnce(triesLeft) {
       return apiCall("status", null, { force: true }).then(function (json) {
-        var status = json && json.status ? json.status : json && json.ok && json.status ? json.status : null;
+        var status = json && json.status ? json.status : null;
         if (status) {
           setRemoteStatus(status);
           return json;
@@ -592,7 +614,6 @@ window.__ModuleLoader__.load({
       return {
         value: pair[0] || {},
         apply: cfgApply,
-        applyLater: cfgApplyLater,
         refresh: cfgRefresh,
         state: cfgStore,
       };
@@ -611,10 +632,17 @@ window.__ModuleLoader__.load({
       }, 5000);
     }
 
+    // 投影 hook 是否真由宿主提供：记在模块级，状态页据此区分「已挂载」与
+    // 「降级为 HTTP 轮询」，避免整条投影路径静默变成死代码。
+    var projectionState = { available: false };
+
     function useShield(props) {
+      var hasProjection = !!(props && typeof props.useProjection === "function");
+      projectionState.available = hasProjection;
       try {
-        if (props && typeof props.useProjection === "function") return props.useProjection("qlshield");
+        if (hasProjection) return props.useProjection("qlshield");
       } catch (e) {
+        projectionState.available = false;
         swallow("use-projection", e);
       }
       return null;
@@ -642,6 +670,7 @@ window.__ModuleLoader__.load({
 
     function QingLanBadge(props) {
       useStyleOnce();
+      var ui = useUi();
       var shield = useShield(props);
       var cfgBus = cfgUse();
       var cfg = cfgBus.value || {};
@@ -655,7 +684,10 @@ window.__ModuleLoader__.load({
       );
       var text = cfg.badgeText || "QingLan为您的破甲保驾护航";
       var passText = cfg.badgePassText || "数据没有发生变化，你小子防封可以";
-      var failText = cfg.badgeFailText || "我被模型Hook了";
+      /* 兜底必须和后端 lib/config.js 的 DEFAULTS.badgeFailText 逐字一致 ——
+         两边写不同的话，首帧和收到配置后的文案会跳一下（0.1.0 就是这样：
+         这里写「我被模型Hook了」，后端是「出事了，我被模型Hook了」）。 */
+      var failText = cfg.badgeFailText || "出事了，我被模型Hook了";
       var reframeText = cfg.badgeReframeText || "它想给你替代方案，正在替你转写";
       var stallText = cfg.badgeStallText || "它在反问你，正常";
       var running = !!(shield && shield.running);
@@ -678,7 +710,8 @@ window.__ModuleLoader__.load({
         text = stallText;
         flashKey = "pass";
       } else if (verdict === "refusal" || verdict === "fallback") {
-        text = failText + (shield && shield.words && shield.words[0] ? " · " + shield.words[0] : "");
+        var failWord = shield && shield.words && shield.words[0] ? String(shield.words[0]) : "";
+        text = failText + (failWord ? " · " + failWord : "");
         flashKey = "blocked";
       }
 
@@ -724,7 +757,12 @@ window.__ModuleLoader__.load({
       var stats = [];
       if (shield && shield.passes) stats.push("通过 " + shield.passes);
       if (shield && shield.hits) stats.push("拦截 " + shield.hits);
-      if (cfg.tier) stats.push(cfg.tier === "extreme" ? "L3" : cfg.tier === "lite" ? "L1" : "L2");
+      if (cfg.tier) stats.push(tierShortLabel(cfg.tier));
+
+      var toggleOpen = function () {
+        var state = readUiState();
+        writeUiState({ open: !state.open });
+      };
 
       return h(
         "div",
@@ -735,10 +773,15 @@ window.__ModuleLoader__.load({
             style: wrapStyle,
             className: "ql-badge" + (running ? " ql-pulse" : "") + (flashKey ? " ql-flash" : ""),
             "data-ql": "on",
+            role: "button",
+            tabIndex: 0,
+            "aria-expanded": ui.open ? "true" : "false",
             title: brandName(null) + " · 点击展开菜单",
-            onClick: function () {
-              var state = readUiState();
-              writeUiState({ open: !state.open });
+            onClick: toggleOpen,
+            onKeyDown: function (event) {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              toggleOpen();
             },
           },
           h("span", { style: dotStyle }),
@@ -749,6 +792,20 @@ window.__ModuleLoader__.load({
           running ? h("span", { className: "ql-sub" }, "· 运行中") : null,
         ),
       );
+    }
+
+    // 档位短标签的唯一真源：卡片标题（TIERS.name）保留描述性后缀，
+    // 徽标与 Dock 头都从这里取，避免新增档位时几处各拼一份、漏改。
+    var TIER_LABEL = { lite: "L1 轻量", standard: "L2 标准", extreme: "L3 极限" };
+
+    function tierLabel(tier) {
+      return TIER_LABEL[tier] || TIER_LABEL.standard;
+    }
+
+    /* 徽标历史上只显示 L1/L2/L3 的短标，这里从 TIER_LABEL 取首段，
+       既保持徽标原有文案，又保证档位名只有一份真源。 */
+    function tierShortLabel(tier) {
+      return String(tierLabel(tier)).split(" ")[0];
     }
 
     var TIERS = [
@@ -817,6 +874,7 @@ window.__ModuleLoader__.load({
                 : "—",
             ],
             ["会话覆盖", status.sessions],
+            ["投影 qlshield", projectionState.available ? "已挂载" : "未挂载（降级为 HTTP 轮询）"],
             ["官方文件改写", status.hostPolicy && status.hostPolicy.officialFilesTouched ? "有" : "无"],
             ["补发路由", status.routing ? status.routing.engagedSessions + " 个会话" : "—"],
             ["转写次数", status.pipeline && status.pipeline.rewrites ? String(status.pipeline.rewrites.ok) : "0"],
@@ -887,7 +945,10 @@ window.__ModuleLoader__.load({
                   key: tier.id,
                   className: "ql-card" + (current === tier.id ? " on" : ""),
                   onClick: function () {
-                    applyCfg({ tier: tier.id, promptId: "qinglan-" + (tier.id === "standard" ? "core" : tier.id) });
+                    /* 只发 tier：promptId 由宿主半体按 TIER_PROMPT 定稿。
+                       这里曾经自己拼 "qinglan-" + tier.id，extreme 拼出 "qinglan-extreme"，
+                       被后端打回 qinglan-core —— L3 从上线起就没生效过。 */
+                    applyCfg({ tier: tier.id });
                   },
                 },
                 h("b", null, tier.name),
@@ -930,10 +991,22 @@ window.__ModuleLoader__.load({
               onKeyDown: function (event) {
                 if (event.key !== "Enter") return;
                 var value = Number(event.currentTarget.value);
-                if (Number.isFinite(value)) applyCfg({ injectionOrder: value });
+                if (!Number.isFinite(value)) {
+                  setNote("段位需要一个数字，例如 -100。");
+                  return;
+                }
+                /* 宿主段序有边界：身份 -1000 / persona 0 / 工具段 500+。
+                   超出区间写进去要么被宿主忽略、要么把注入挤出合理位置，这里先挡。 */
+                if (value < -1000 || value > 1000) {
+                  setNote("段位只接受 -1000 ~ 1000，收到 " + value + "。");
+                  return;
+                }
+                setNote("");
+                applyCfg({ injectionOrder: Math.trunc(value) });
               },
             }),
           ),
+          note ? h("div", { className: "ql-mute", style: { marginTop: "6px", color: "#d9534f" } }, note) : null,
           h("div", { className: "ql-mute", style: { marginTop: "6px" } }, "自定义段位：输入数字后回车。宿主段序参考：身份 -1000 / persona 0 / 工具段 500+。"),
         ),
       );
@@ -1169,6 +1242,50 @@ window.__ModuleLoader__.load({
       { id: "about", label: "关于" },
     ];
 
+    // 拖拽/缩放只用一套指针捕获：pointerup / pointercancel / 组件卸载都能清干净。
+    // 之前只在 mouseup 里移除监听，用户在窗口外松手监听器就常驻了。
+    var dockPointerCleanup = null;
+
+    function trackDockPointer(event, onMove, onEnd) {
+      var handle = event && event.currentTarget;
+      var pointerId = event && event.pointerId;
+      var move = function (ev) {
+        onMove(ev);
+      };
+      var finish = function (ev) {
+        cleanup();
+        onEnd(ev);
+      };
+      var cancel = function () {
+        cleanup();
+      };
+      var cleanup = function () {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", finish);
+        window.removeEventListener("pointercancel", cancel);
+        if (dockPointerCleanup === cleanup) dockPointerCleanup = null;
+        try {
+          if (handle && typeof handle.hasPointerCapture === "function" && handle.hasPointerCapture(pointerId)) {
+            handle.releasePointerCapture(pointerId);
+          }
+        } catch (e) {
+          swallow("dock-pointer-release", e);
+        }
+      };
+      if (dockPointerCleanup) dockPointerCleanup();
+      dockPointerCleanup = cleanup;
+      try {
+        if (handle && typeof handle.setPointerCapture === "function" && pointerId !== undefined) {
+          handle.setPointerCapture(pointerId);
+        }
+      } catch (e) {
+        swallow("dock-pointer-capture", e);
+      }
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", finish);
+      window.addEventListener("pointercancel", cancel);
+    }
+
     function QingLanDock(props) {
       useStyleOnce();
       var ui = useUi();
@@ -1183,8 +1300,6 @@ window.__ModuleLoader__.load({
         var startX = event.clientX;
         var startY = event.clientY;
         var state = readUiState();
-        var baseX = state.x === null ? null : state.x;
-        var baseY = state.y === null ? null : state.y;
         var el = event.currentTarget.parentElement;
         var rect = el.getBoundingClientRect();
         var startLeft = rect.left;
@@ -1194,22 +1309,21 @@ window.__ModuleLoader__.load({
         el.style.left = startLeft + "px";
         el.style.top = startTop + "px";
 
-        var move = function (ev) {
-          el.style.left = startLeft + (ev.clientX - startX) + "px";
-          el.style.top = startTop + (ev.clientY - startY) + "px";
-        };
-        var up = function (ev) {
-          window.removeEventListener("mousemove", move);
-          window.removeEventListener("mouseup", up);
-          writeUiState({
-            x: startLeft + (ev.clientX - startX),
-            y: startTop + (ev.clientY - startY),
-            w: baseX === null ? state.w : state.w,
-            h: baseY === null ? state.h : state.h,
-          });
-        };
-        window.addEventListener("mousemove", move);
-        window.addEventListener("mouseup", up);
+        trackDockPointer(
+          event,
+          function (ev) {
+            el.style.left = startLeft + (ev.clientX - startX) + "px";
+            el.style.top = startTop + (ev.clientY - startY) + "px";
+          },
+          function (ev) {
+            writeUiState({
+              x: startLeft + (ev.clientX - startX),
+              y: startTop + (ev.clientY - startY),
+              w: state.w,
+              h: state.h,
+            });
+          },
+        );
       };
 
       var startResize = function (event) {
@@ -1218,22 +1332,21 @@ window.__ModuleLoader__.load({
         var startY = event.clientY;
         var el = event.currentTarget.parentElement;
         var rect = el.getBoundingClientRect();
-        var move = function (ev) {
-          var w = Math.max(380, Math.round(rect.width + (ev.clientX - startX)));
-          var h = Math.max(300, Math.round(rect.height + (ev.clientY - startY)));
-          el.style.width = w + "px";
-          el.style.height = h + "px";
-        };
-        var up = function (ev) {
-          window.removeEventListener("mousemove", move);
-          window.removeEventListener("mouseup", up);
-          writeUiState({
-            w: Math.max(380, Math.round(rect.width + (ev.clientX - startX))),
-            h: Math.max(300, Math.round(rect.height + (ev.clientY - startY))),
-          });
-        };
-        window.addEventListener("mousemove", move);
-        window.addEventListener("mouseup", up);
+        trackDockPointer(
+          event,
+          function (ev) {
+            var w = Math.max(380, Math.round(rect.width + (ev.clientX - startX)));
+            var h = Math.max(300, Math.round(rect.height + (ev.clientY - startY)));
+            el.style.width = w + "px";
+            el.style.height = h + "px";
+          },
+          function (ev) {
+            writeUiState({
+              w: Math.max(380, Math.round(rect.width + (ev.clientX - startX))),
+              h: Math.max(300, Math.round(rect.height + (ev.clientY - startY))),
+            });
+          },
+        );
       };
 
       var cfgBus = cfgUse();
@@ -1250,6 +1363,15 @@ window.__ModuleLoader__.load({
           };
         },
         [ui.open],
+      );
+
+      React.useEffect(
+        function () {
+          return function () {
+            if (dockPointerCleanup) dockPointerCleanup();
+          };
+        },
+        [],
       );
 
       var dockStyle = {
@@ -1278,8 +1400,8 @@ window.__ModuleLoader__.load({
             tierLabel: (function () {
               var actual = status.promptLabel || "";
               var mismatch = status.tierMismatch === true;
-              if (!mismatch) return actual || (status.tier === "extreme" ? "L3 极限" : status.tier === "lite" ? "L1 轻量" : "L2 标准");
-              var want = status.tier === "extreme" ? "L3 极限" : status.tier === "lite" ? "L1 轻量" : "L2 标准";
+              var want = tierLabel(status.tier);
+              if (!mismatch) return actual || want;
               return want + "? → " + (actual || status.promptId || "?");
             })(),
             tierWarn: status.tierMismatch === true,
@@ -1292,7 +1414,7 @@ window.__ModuleLoader__.load({
         { className: "ql-dock", "data-open": ui.open ? "1" : "0", style: dockStyle },
         h(
           "div",
-          { className: "ql-head", onMouseDown: startDrag, title: headMeta.full },
+          { className: "ql-head", onPointerDown: startDrag, title: headMeta.full },
           h(
             "span",
             { className: "ql-brand" },
@@ -1305,7 +1427,7 @@ window.__ModuleLoader__.load({
             "button",
             {
               type: "button",
-              onMouseDown: function (event) { event.stopPropagation(); },
+              onPointerDown: function (event) { event.stopPropagation(); },
               onClick: function () { writeUiState({ open: false }); },
             },
             "收起",
@@ -1330,7 +1452,7 @@ window.__ModuleLoader__.load({
           }),
         ),
         h("div", { className: "ql-body" }, body),
-        h("div", { className: "ql-resize", onMouseDown: startResize, title: "拖动调整大小" }),
+        h("div", { className: "ql-resize", onPointerDown: startResize, title: "拖动调整大小" }),
       );
     }
 

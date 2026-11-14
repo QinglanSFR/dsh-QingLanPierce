@@ -1,6 +1,6 @@
 {
   "name": "dsh-QingLanPierce",
-  "version": "0.1.0-beta.5",
+  "version": "0.1.1-beta.1",
   "description": "QingLan · DeepSeek Harness 破甲中枢 · 免费开源 · 禁止违法用途 · 仅供学习！",
   "type": "module",
   "main": "index.js",
@@ -13,7 +13,7 @@
   ],
   "engines": {
     "node": ">=20.11",
-    "dsh": ">=0.2.0-rc.2 <0.3.0-0"
+    "dsh": ">=0.2.0-rc.2 <0.3.0-0 || >=0.2.2-rc.3 <0.3.0-0"
   },
   "exports": {
     ".": "./index.js",
@@ -28,6 +28,7 @@
     "lib",
     "prompts",
     "prompts/examples",
+    "assets",
     "README.md",
     "LICENSE",
     "install.ps1",
@@ -36,12 +37,16 @@
     "uninstall.sh"
   ],
   "scripts": {
-    "check": "node --check index.js && node --check client.js"
+    "check": "node --check index.js && node --check client.js && node --check lib/config.js && node --check lib/core.js && node --check lib/lexicon.js && node --check lib/notation.js",
+    "verify": "node scripts/verify.mjs",
+    "build": "node scripts/build.mjs",
+    "fix-bom": "node scripts/fix-bom.mjs",
+    "e2e": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-install.ps1"
   },
   "dsh": {
     "id": "dsh-QingLanPierce",
     "name": "QingLan破甲插件",
-    "version": "0.1.0-beta.5",
+    "version": "0.1.1-beta.1",
     "bundle": {
       "patch": "./cordis.patch.yml"
     },

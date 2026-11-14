@@ -52,7 +52,7 @@ if [ -d "$DEST_DIR" ]; then
   mv "$DEST_DIR" "$DEST_DIR.bak-$STAMP"
 fi
 mkdir -p "$DEST_DIR"
-( cd "$SOURCE_DIR" && tar --exclude='.git' --exclude='*.bak-*' --exclude='dist' --exclude='./assets' -cf - . ) | ( cd "$DEST_DIR" && tar -xf - )
+( cd "$SOURCE_DIR" && tar --exclude='.git' --exclude='*.bak-*' --exclude='dist' --exclude='./assets' --exclude='./scripts' --exclude='./node_modules' --exclude='./.github' -cf - . ) | ( cd "$DEST_DIR" && tar -xf - )
 ok "插件已就位：$DEST_DIR"
 
 # 记录本次安装用的 profile。卸载脚本靠它定位目标 —— 只按目录名猜会出事：
