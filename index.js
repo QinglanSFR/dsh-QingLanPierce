@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, readdirSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import {
   PLUGIN_NAME,
   TIER_PROMPT,
   VERSION,
+  WASH_MODES,
   auditPath,
   configPath,
   dataDir,
@@ -59,7 +60,17 @@ const EVENTS = {
   INBOX_INSERTED: "agent/inbox/inserted",
   PRE_STEP: "agent/pre-step",
   AGENT_STATUS: "agent/status",
+  ASSEMBLE: "system-prompt/assemble",
 };
+
+/* 身份清洗要删的三段。两个 deployment 名与 dsh-system-prompt 导出的常量同值，
+   但本项目零依赖、不 import 官方包，所以在这里写字面量；名字变了就是没删到，
+   状态页的 dropped 列表一眼能看出来。 */
+const WASH_IDENTITY_SECTIONS = new Set([
+  "harness:identity",
+  "deployment:persona-prefix",
+  "deployment:persona-suffix",
+]);
 
 const ESCAPE_COOLDOWN_MS = 5 * 60 * 1000;
 
@@ -83,6 +94,8 @@ const runtime = {
   configRev: 0,
   lastConfigStamp: "",
   lastConfigMtime: 0,
+  lastConfigSize: 0,
+  lastConfigCtime: 0,
   pendingEngagements: [],
   prompts: {},
   promptsStamp: 0,
@@ -117,6 +130,28 @@ const runtime = {
   webRouteAt: 0,
   httpGuardReason: "",
   budgetNote: { ok: 0, lastAt: 0 },
+
+  /* 身份清洗的运行时观测：组装次数、最近一次 before/after、留下与删掉的段名、
+     被接管的会话集合（按 session 去重，上限 100）。sessions 是"子智能体也被接管"
+     的唯一运行时证据 —— 空实现时谁都没法从外部确认。 */
+  wash: {
+    assemblies: 0,
+    washed: 0,
+    skipped: 0,
+    lastApplied: false,
+    lastMode: "",
+    lastAt: 0,
+    lastBefore: 0,
+    lastAfter: 0,
+    kept: [],
+    dropped: [],
+    keptTotal: 0,
+    droppedTotal: 0,
+    lastSession: "",
+    sessions: new Map(),
+    disposer: null,
+  },
+
   statusCtx: null,
   lastAssembly: { at: 0, chars: 0, order: null, tier: "", promptId: "" },
 };
@@ -347,19 +382,25 @@ function refreshConfig(ctx, force = false) {
   const file = configPath();
   let stamp = 0;
   let size = 0;
+  let ctime = 0;
   try {
     const stat = statSync(file);
     stamp = stat.mtimeMs;
     size = stat.size;
+    /* mtime 可以被 utimes 还原（rsync -a、保留时间戳的编辑器、容器 bind mount），
+       只看 mtime+size 会把"同长度改写"当成没变。ctime 是 inode 变更时间，改内容
+       或改时间戳都会刷新它，补上这一位就能挡住伪造。 */
+    ctime = stat.ctimeMs;
   } catch {
     stamp = 0;
     size = 0;
+    ctime = 0;
   }
   /* 先比 stat 再决定要不要读盘。面板打开时每 5 秒轮询一次状态，以前每次都走
      existsSync + statSync + readFileSync + JSON.parse + 两次 JSON.stringify 全套，
      mtime 没变也照读。文件戳没动过就不可能有内容变化，直接返回。
      force=true（客户端重试时带 body.force）跳过这道短路，强制重读一遍。 */
-  if (!force && runtime.lastConfigStamp && stamp === runtime.lastConfigMtime && size === runtime.lastConfigSize) {
+  if (!force && runtime.lastConfigStamp && stamp === runtime.lastConfigMtime && size === runtime.lastConfigSize && ctime === runtime.lastConfigCtime) {
     return false;
   }
   runtime.userFile = readJson(file, {});
@@ -369,6 +410,7 @@ function refreshConfig(ctx, force = false) {
   });
   runtime.lastConfigMtime = stamp;
   runtime.lastConfigSize = size;
+  runtime.lastConfigCtime = ctime;
   if (before !== runtime.lastConfigStamp) {
     runtime.lastConfigStamp = before;
     resolveAndInstall(ctx);
@@ -386,9 +428,11 @@ function resolveAndInstall(ctx) {
     const stat = statSync(configPath());
     runtime.lastConfigMtime = stat.mtimeMs;
     runtime.lastConfigSize = stat.size;
+    runtime.lastConfigCtime = stat.ctimeMs;
   } catch {
     runtime.lastConfigMtime = 0;
     runtime.lastConfigSize = 0;
+    runtime.lastConfigCtime = 0;
   }
   refreshPrompts();
   if (ctx && ctx.systemPrompt) installSection(ctx);
@@ -447,15 +491,72 @@ function applyExamplesDir(text) {
 }
 
 
-function buildSectionText() {
-  const cfg = runtime.config;
+/* 工具规范稿的读取。三件事：用户稿优先、按 mtime+size 缓存（每个装配都会问一次）、
+   设上限 —— 用户放一份 1MB 的文件进来不该把每一轮系统提示词都撑爆。 */
+const WASH_DOC_MAX_BYTES = 32 * 1024;
+const WASH_DOC_MIN_CHARS = 100;
+const WASH_DOC_CACHE = { key: "", text: "" };
+
+function washToolsDoc() {
+  const candidates = [join(promptsDir(), "wash-tools.md"), join(BUILTIN_PROMPT_DIR, "wash-tools.md")];
+  for (const file of candidates) {
+    try {
+      if (!existsSync(file)) continue;
+      const stat = statSync(file);
+      const key = `${file}|${stat.mtimeMs}|${stat.size}`;
+      if (WASH_DOC_CACHE.key === key) return WASH_DOC_CACHE.text;
+      if (stat.size > WASH_DOC_MAX_BYTES) continue;
+      const text = readFileSync(file, "utf8").trim();
+      if (text.length < WASH_DOC_MIN_CHARS) continue;
+      WASH_DOC_CACHE.key = key;
+      WASH_DOC_CACHE.text = text;
+      return text;
+    } catch {
+
+    }
+  }
+  return "";
+}
+
+/* 装配路径上只读配置，不提交：以前这里调 refreshConfig(null)，它会把 mtime/size 戳刷成
+   新值，而 ctx 为 null 时 installSection 不执行 —— 之后面板的 refreshConfig(ctx) 因为戳
+   已对齐而永远短路，手改 injectionOrder 就再也不会重挂，段尾 meta 却报新位置。
+   现在装配路径拿一份只读快照，配置提交只发生在真正带 ctx 的路径（状态/写配置/重载）。
+   快照按 stat 三元组缓存：装配热路径每轮只多一次 stat，不重读 JSON。 */
+const SECTION_CFG_CACHE = { key: "", cfg: null };
+
+function sectionConfig() {
+  try {
+    let key = "";
+    try {
+      const stat = statSync(configPath());
+      key = `${stat.mtimeMs}|${stat.size}|${stat.ctimeMs}`;
+    } catch {
+      key = "missing";
+    }
+    if (SECTION_CFG_CACHE.cfg && SECTION_CFG_CACHE.key === key) return SECTION_CFG_CACHE.cfg;
+    const cfg = resolveConfig(runtime.rowConfig);
+    SECTION_CFG_CACHE.key = key;
+    SECTION_CFG_CACHE.cfg = cfg;
+    return cfg;
+  } catch (error) {
+    recordError("section-config", error);
+    return runtime.config;
+  }
+}
+
+function buildSectionText(configOverride) {
+  const cfg = configOverride || sectionConfig();
+  /* 稿件可能在两次配置变更之间被改写（用户直接编辑 prompts/*.md），这里保留一次
+     带 mtime 短路的刷新，代价是几次 stat。 */
+  refreshPrompts();
   if (cfg.enabled === false) {
     /* 必须把上一轮的正文清掉：否则关掉总开关后状态页还在报「生效稿 10538 字」，
        而实际上一个字都没注入。 */
     runtime.sectionText = "";
     runtime.sectionFingerprint = "";
     /* lastAssembly 也要跟着归零，否则状态里还留着一个"上次构建 10538 字"的假数字 */
-    runtime.lastAssembly = { at: Date.now(), chars: 0, order: cfg.injectionOrder, tier: cfg.tier, promptId: "" };
+    runtime.lastAssembly = { at: Date.now(), chars: 0, order: runtime.sectionOrder ?? cfg.injectionOrder, tier: cfg.tier, promptId: "" };
     return "";
   }
 
@@ -473,18 +574,25 @@ function buildSectionText() {
   }
   if (!text) return "";
   text = applyExamplesDir(text);
-  const meta = `[qd:${VERSION}|tier=${cfg.tier}|pos=${cfg.injectionOrder}|src=${id}|ex=${existsSync(examplesDirFor()) ? "1" : "0"}]`;
+  /* 全量清洗时官方工具指引段不会出现在系统提示词里，稿尾自带的那份必须补上，
+     否则模型只知道工具的 JSON schema，不知道怎么用。identity 模式保留官方工具段，
+     所以只在 full 下追加。 */
+  if (cfg.washMode === "full") {
+    const toolsDoc = washToolsDoc();
+    if (toolsDoc) text = `${text}\n\n${toolsDoc}`;
+  }
+  const meta = `[qd:${VERSION}|tier=${cfg.tier}|pos=${runtime.sectionOrder ?? cfg.injectionOrder}|src=${id}|ex=${existsSync(examplesDirFor()) ? "1" : "0"}]`;
   const body = `${text}\n\n${meta}`;
   const stamp = fingerprint(body);
   if (stamp !== runtime.sectionFingerprint) {
     runtime.sectionFingerprint = stamp;
     runtime.sectionText = body;
-    log("section rebuilt", { tier: cfg.tier, id, order: cfg.injectionOrder, chars: body.length });
+    log("section rebuilt", { tier: cfg.tier, id, order: runtime.sectionOrder ?? cfg.injectionOrder, chars: body.length });
   }
   runtime.lastAssembly = {
     at: Date.now(),
     chars: runtime.sectionText.length,
-    order: cfg.injectionOrder,
+    order: runtime.sectionOrder ?? cfg.injectionOrder,
     tier: cfg.tier,
     promptId: id,
   };
@@ -497,17 +605,15 @@ function installSection(ctx) {
   } catch {
 
   }
-  const order = runtime.config.injectionOrder;
+  const order = sectionConfig().injectionOrder;
   const disposal = ctx.systemPrompt.section({
     name: `${PLUGIN_ID}:frame`,
     order,
     interpolate: false,
     text: () => {
       try {
-        if (!runtime.config.enabled) return "";
-        refreshConfig(null);
-        refreshPrompts();
-        return buildSectionText();
+        /* 只读快照 + 惰性重算：装配路径不改任何全局配置状态（见 sectionConfig 注释）。 */
+        return buildSectionText(sectionConfig());
       } catch (error) {
         log("section text failed", String(error?.message || error));
         return "";
@@ -519,13 +625,186 @@ function installSection(ctx) {
   log("section installed at order", order);
 }
 
+/* 身份清洗：在 system-prompt/assemble 瀑布上改最终装配结果。
+   为什么不用 complete 段：complete 由注册表在瀑布之后恢复，全进程只能有一个，
+   与任何别的 complete 相撞会让组装直接抛错、会话起不来。瀑布是"最后一次修改"，
+   失败最坏是没清干净，不会让会话挂掉。
+
+   覆盖面：所有 agent 的装配都走同一个 ctx.systemPrompt.assemble()，事件按 scope
+   派发且无标签监听器全放行；{ global: true } 更是绕过筛选。子智能体在同一 cordis
+   上下文里创建，team 成员走 ctx.subagents 的 continuable 通道 —— 同一条总线。 */
+function installWash(ctx) {
+  if (typeof ctx.on !== "function") return false;
+  /* 宿主二次 apply 会重复绑定：一次装配被清两遍、assemblies 翻倍。和 installSection
+     一样先把旧的卸掉。 */
+  try {
+    runtime.wash.disposer?.();
+  } catch {
+
+  }
+  runtime.wash.disposer = null;
+
+  const handler = async (assembly, assembleContext, next) => {
+    /* 配置在 next() 之前就要读：段文本按当前配置渲染，而 buildSectionText 里
+       `enabled === false` 直接返回空串。外部把 enabled 从 false 改回 true 时，
+       若等 next() 之后再读，这一轮插件段是空串，full 模式会整轮放行 ——
+       系统提示词里既没有破甲稿也没有清洗，等于裸奔一轮。
+       只读，不提交（提交会吃掉 refreshConfig 的 mtime 短路，见 sectionConfig 注释）。 */
+    let cfg = runtime.config;
+    try {
+      cfg = resolveConfig(runtime.rowConfig);
+    } catch (error) {
+      recordError("wash-config", error);
+    }
+    const result = await next();
+    try {
+      if (!result || !Array.isArray(result.sections)) return result;
+      /* 总开关关掉 = 什么都不动。identity 也不例外，否则用户关了插件却发现
+         官方身份还在被删，行为对不上开关的名字。 */
+      if (cfg.enabled === false) return result;
+      const mode = String(cfg.washMode || "off");
+      if (mode !== "identity" && mode !== "full") return result;
+
+      /* 逐段兜底：宿主传进来 null，或某个段取 name 就抛错时，丢掉那一项继续清。
+         整段 try 会把一次脏数据变成"整轮 fail-open"，而清洗的语义是宁可多删不可漏删。 */
+      const usable = [];
+      const before = [];
+      for (const section of result.sections) {
+        try {
+          if (!section || typeof section !== "object") continue;
+          if (typeof section.name !== "string" || !section.name) continue;
+          before.push(section.name);
+          usable.push(section);
+        } catch {
+          /* 取属性就抛错的段：跳过 */
+        }
+      }
+
+      let kept;
+      let applied;
+      if (mode === "identity") {
+        kept = usable.filter((section) => !WASH_IDENTITY_SECTIONS.has(section.name));
+        applied = kept.length !== usable.length;
+      } else {
+        const selfName = `${PLUGIN_ID}:frame`;
+        const mine = usable.filter(
+          (section) => section.name === selfName && String(section.text || "").trim().length > 0,
+        );
+        /* 插件关闭 / 稿件读取失败时不能清空：那会让模型收到空系统提示词。 */
+        if (mine.length === 0) {
+          kept = usable;
+          applied = false;
+        } else {
+          kept = mine;
+          applied = true;
+          /* 上下文不是数组也照样置空：宿主恒为数组，但脏数据不该让"清空"变成没清。 */
+          if (cfg.washDropContexts !== false) result.contexts = [];
+        }
+      }
+      result.sections = kept;
+
+      const after = kept.map((section) => section.name);
+      const wash = runtime.wash;
+      wash.assemblies += 1;
+      wash.lastAt = Date.now();
+      wash.lastApplied = applied;
+      wash.lastMode = mode;
+      wash.lastBefore = before.length;
+      wash.lastAfter = after.length;
+      if (!applied) {
+        /* 空转的那一轮不算"接管过"：否则状态页的 assemblies 单调递增，
+           "清洗没生效"这条告警永远触发不了，面板还会显示成功。
+           空转轮的 kept/dropped 也要按当前结果重算，否则面板会同时显示
+           "5 段 → 5 段"和上一轮的"删除 4 段"。 */
+        wash.skipped += 1;
+        wash.keptTotal = after.length;
+        wash.droppedTotal = 0;
+        wash.kept = after.slice(0, 20);
+        wash.dropped = [];
+        return result;
+      }
+      wash.washed += 1;
+      wash.keptTotal = after.length;
+      wash.droppedTotal = before.length - after.length;
+      wash.kept = after.slice(0, 20);
+      wash.dropped = before.filter((name) => !after.includes(name)).slice(0, 20);
+      wash.lastSession = sessionKey(assembleContext && (assembleContext.agent || assembleContext.scope)) || "";
+      if (wash.lastSession) {
+        wash.sessions.set(wash.lastSession, Date.now());
+        while (wash.sessions.size > 100) {
+          const oldest = wash.sessions.keys().next().value;
+          if (oldest === undefined) break;
+          wash.sessions.delete(oldest);
+        }
+      }
+    } catch (error) {
+      /* 清洗失败绝不能让这一轮组装挂掉：记错误、原样返回。 */
+      recordError("wash", error);
+    }
+    return result;
+  };
+
+  const attempts = [
+    ["global+prepend", { global: true, prepend: true }],
+    ["prepend", { prepend: true }],
+    ["plain", undefined],
+  ];
+  for (const [via, options] of attempts) {
+    try {
+      const dispose = options ? ctx.on(EVENTS.ASSEMBLE, handler, options) : ctx.on(EVENTS.ASSEMBLE, handler);
+      runtime.wash.disposer = typeof dispose === "function" ? dispose : null;
+      if (Array.isArray(runtime.listenerBindings)) {
+        runtime.listenerBindings.push({ event: EVENTS.ASSEMBLE, ok: true, via, at: Date.now(), disposer: typeof dispose });
+      }
+      log("wash listener bound", via);
+      return true;
+    } catch (error) {
+      log("wash listener attempt failed", via, String(error?.message || error));
+    }
+  }
+  if (Array.isArray(runtime.listenerBindings)) {
+    runtime.listenerBindings.push({ event: EVENTS.ASSEMBLE, ok: false, via: "", at: Date.now(), error: "no viable ctx.on" });
+  }
+  return false;
+}
+
+function washStats(cfgArg) {
+  const cfg = cfgArg || sectionConfig();
+  const wash = runtime.wash;
+  return {
+    mode: cfg.washMode,
+    dropContexts: cfg.washDropContexts !== false,
+    assemblies: wash.assemblies,
+    washed: wash.washed,
+    skipped: wash.skipped,
+    lastApplied: wash.lastApplied,
+    lastMode: wash.lastMode,
+    sessions: wash.sessions.size,
+    lastAt: wash.lastAt,
+    lastBefore: wash.lastBefore,
+    lastAfter: wash.lastAfter,
+    keptTotal: wash.keptTotal,
+    droppedTotal: wash.droppedTotal,
+    kept: wash.kept || [],
+    dropped: wash.dropped || [],
+    lastSession: wash.lastSession,
+    toolsDoc: cfg.washMode === "full" && washToolsDoc().length > 0,
+    /* 宿主自己会补回的 required 上下文，插件侧删不掉 —— 与其让用户去读宿主源码，
+       不如在状态里明说。 */
+    requiredBack: ["working-directory:current", "subagent:identity"],
+  };
+}
+
 const jsonOutput = {
   schema: { type: "object", additionalProperties: true },
   render: (_args, value) => [{ type: "text", text: JSON.stringify(value, null, 2) }],
 };
 
 function buildStatus() {
-  const cfg = runtime.config;
+  /* 状态一律用只读快照：buildSectionText 也是读它，两边同源。以前这里用 runtime.config，
+     而段文本读盘，于是手改配置后 doctor 会出现"档位 standard / 段尾 tier=extreme"这种
+     同一份状态两套事实的分裂。 */
+  const cfg = sectionConfig();
 
   try {
     buildSectionText();
@@ -564,6 +843,53 @@ function buildStatus() {
       text: `档位与稿子一致：${cfg.tier} → ${cfg.promptId}（${PROMPT_LABEL[cfg.promptId] || cfg.promptId}）`,
     });
   }
+
+  /* 身份清洗的检查项。full 下先确认稿尾那份工具规范在不在 —— 官方工具指引段已经
+     被清掉了，没有 wash-tools.md 就等于让模型裸调工具。
+     判定只看「最近一轮是不是本模式且真的过滤过」：washed 是跨模式累计值，
+     拿它当证据会让"以前成功过一次、现在坏了"一直显示绿色。 */
+  if (cfg.washMode === "full") {
+    const wash = runtime.wash;
+    if (cfg.enabled === false) {
+      checks.push({ level: "warn", text: "总开关已关闭：清洗不作用，官方段原样保留" });
+    } else if (wash.assemblies === 0) {
+      checks.push({ level: "warn", text: "身份清洗尚未生效：还没有装配经过瀑布钩子" });
+    } else if (wash.lastMode !== "full") {
+      checks.push({ level: "warn", text: "已切到全量替换，等下一轮装配生效" });
+    } else if (!wash.lastApplied) {
+      checks.push({ level: "warn", text: "身份清洗未生效：插件段为空（总开关 / 稿件 / 段名三处任一出问题）" });
+    } else {
+      checks.push({ level: "ok", text: `身份清洗：全量替换（最近一次 ${wash.lastBefore} 段 → ${wash.lastAfter} 段）` });
+    }
+    if (!washToolsDoc()) checks.push({ level: "warn", text: "全量清洗缺少可用的 prompts/wash-tools.md：模型将看不到工具用法" });
+    if (cfg.washDropContexts === false) checks.push({ level: "ok", text: "运行时上下文保留（含子智能体声明）" });
+    else checks.push({ level: "mute", text: "运行时上下文已清空；working-directory:current 与 subagent:identity 由宿主补回" });
+  } else if (cfg.washMode === "identity") {
+    const wash = runtime.wash;
+    if (cfg.enabled === false) {
+      checks.push({ level: "warn", text: "总开关已关闭：清洗不作用，官方段原样保留" });
+    } else if (wash.assemblies === 0) {
+      checks.push({ level: "warn", text: "身份清洗尚未生效：还没有装配经过瀑布钩子" });
+    } else if (wash.lastMode !== "identity") {
+      checks.push({ level: "warn", text: "已切到擦身份，等下一轮装配生效" });
+    } else if (!wash.lastApplied) {
+      checks.push({ level: "warn", text: "擦身份未删到任何官方段：段名可能已随宿主版本改名" });
+    } else {
+      checks.push({ level: "ok", text: "身份清洗：已擦除官方身份与人设段（工具指引保留）" });
+    }
+  }
+
+  /* 手改 config.json 把注入位置改了，但段还没重挂时，meta 与状态都按"已注册位置"报，
+     同时在这里说清楚差的这一步 —— 不假装生效。 */
+  const wantedOrder = cfg.injectionOrder;
+  const actualOrder = runtime.sectionOrder;
+  if (section && Number.isFinite(actualOrder) && actualOrder !== wantedOrder) {
+    checks.push({ level: "warn", text: `注入位置已改为 ${wantedOrder}，当前注册仍是 ${actualOrder}：打开面板刷新或 /qinglan reload 后生效` });
+  }
+  if (runtime.errorLog.some((row) => String(row.where || "").startsWith("wash"))) {
+    checks.push({ level: "warn", text: "清洗路径有异常记录：见 status.pipeline.errors（最近 5 条）" });
+  }
+
   const recent = runtime.pendingEngagements.slice(-5);
   const blocked = recent.filter(
     (row) => row.verdict === "refusal" || row.verdict === "fallback",
@@ -580,7 +906,8 @@ function buildStatus() {
     tierMismatch: tierProblems.length > 0,
     tierProblems,
 
-    injectionOrder: cfg.injectionOrder,
+    injectionOrder: Number.isFinite(runtime.sectionOrder) ? runtime.sectionOrder : cfg.injectionOrder,
+    injectionOrderWanted: cfg.injectionOrder,
     sectionChars: section.length,
     sectionFingerprint: runtime.sectionFingerprint,
     sectionTail: section.slice(-160),
@@ -620,6 +947,8 @@ function buildStatus() {
       lastAt: runtime.budgetNote?.lastAt || 0,
       text: BUDGET_NOTE,
     },
+
+    wash: washStats(cfg),
 
     pipeline: {
       listeners: runtime.listenerBindings.slice(-6),
@@ -814,6 +1143,16 @@ function normalizeConfigPatch(patch) {
     }
     next.injectionOrder = Math.trunc(order);
   }
+  if (has("washMode")) {
+    const mode = String(next.washMode ?? "");
+    if (!WASH_MODES.includes(mode)) {
+      return { error: `washMode 只接受 ${WASH_MODES.join(" | ")}，收到 ${JSON.stringify(next.washMode)}` };
+    }
+    next.washMode = mode;
+  }
+  if (has("washDropContexts") && typeof next.washDropContexts !== "boolean") {
+    return { error: "washDropContexts 只接受布尔值" };
+  }
   return { patch: next };
 }
 
@@ -932,6 +1271,12 @@ function makeDoctorTool() {
       if (status.sectionChars > 12000) warn.push("生效稿偏长，可能触发前缀缓存失效（建议换 lite 档）");
       if (runtime.config.tier === "standard" && status.injectionOrder > 0) {
         warn.push("当前位置在 persona 之后，效果偏弱；建议切到「紧跟身份」(-100) 或「极限抢占」(-999)");
+      }
+      if (runtime.config.washMode === "full" && !washToolsDoc()) {
+        warn.push("全量清洗缺少 prompts/wash-tools.md：模型看不到工具用法，只能靠 schema 猜");
+      }
+      if (runtime.config.washMode === "full" && status.wash && status.wash.assemblies === 0) {
+        warn.push("全量清洗已开启，但还没有任何一次装配经过瀑布钩子：确认宿主版本提供 system-prompt/assemble");
       }
       return {
         ok: warn.length === 0,
@@ -2151,6 +2496,8 @@ export function apply(ctx, rowConfig = {}) {
   }
 
   installRefusalResend(ctx);
+
+  installWash(ctx);
 
   installEngagementListener(ctx);
 

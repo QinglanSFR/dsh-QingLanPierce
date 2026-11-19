@@ -1,7 +1,7 @@
 <h1 align="center">QingLan · 破甲中枢</h1>
 
 <p align="center">
-  <code><b>dsh-QingLanPierce 0.1.3-beta.1</b></code><br>
+  <code><b>dsh-QingLanPierce 0.2.0-beta.1</b></code><br>
   <sub>快速简洁的 DSH 破甲插件 · 一句命令装好，开箱即用 · 三档口径，切完下一条消息即生效</sub>
 </p>
 
@@ -41,6 +41,7 @@ DeepSeek Harness（以下简称 DSH）的插件。
 - **纯插件实现、零 npm 依赖**：不改写任何 `@deepseek-ai/*` 官方文件、不写 shim、不生成 `.bak`、不改动其它插件、
   不写 profile 补丁（除自己那一行）；卸载即等于不存在。
 - **三档口径可切**：L1 5,503 / L2 6,509 / L3 6,510 字符三份主稿，菜单里点一下，**下一条消息即生效**，不用重启。
+- **身份清洗**：一键把 DSH 官方的身份、人设、工具指引段从系统提示词里清掉，系统提示词只剩破甲稿本身；主会话、子智能体、团队成员一起接管。三档强度（关闭 / 擦身份 / 全量替换），可回退。
 - **改了什么看得见**：词表 13 类 · 173 条词 + 231 条别名，命中后按类别策略转写；「对抗」页有只读自检，
   能先看这一句会被改成什么样再发。
 - **控制面只在本机**：`/qinglan-api` 只挂回环地址，逐请求校验 socket 对端与 `Host` 头；宿主监听非回环地址时整条路由不注册。
@@ -59,7 +60,7 @@ DeepSeek Harness（以下简称 DSH）的插件。
 | **bash**                        | macOS / Linux / WSL / Git Bash          | 仅 `install.sh` 需要                                                                                                                                                            |
 | **Python**                      | **不需要**                              | 发布包不含任何 Python 脚本                                                                                                                                                      |
 | **编译器/构建工具**             | **不需要**                              | 纯 JS，无构建步骤                                                                                                                                                               |
-| **磁盘占用**                    | 约 1 MB                                 | 插件本体 24 个文件、解压后约 978 KB，其中 625 KB 是本 README 的主视觉 `assets/hero.png`；`scripts/` 不进包也不参与安装 |
+| **磁盘占用**                    | 约 1 MB                                 | 插件本体 25 个文件、解压后约 1,000 KB，其中 625 KB 是本 README 的主视觉 `assets/hero.png`；`scripts/` 不进包也不参与安装 |
 
 > 一句话：**装了 DSH 就能用**。除 DSH 本身外，本插件不要求你额外安装任何运行环境。
 
@@ -247,7 +248,7 @@ $DSH_HOME/dsh-QingLanPierce/
 
 确切路径取 `qinglan_control { "action": "status" }` 的 `dataDir` 字段，或 `/qinglan status` 输出里的 `数据目录 …` 一行。
 
-菜单五个页签：**状态**（宿主版本 / 档位自检 / 检查项）、**档位**（切档与注入位置）、**对抗**（转写开关与自检）、**提示词**（当前生效稿与指纹）、**关于**（版本、内置词表规模、作者与仓库地址）。
+菜单六个页签：**状态**（宿主版本 / 档位自检 / 检查项）、**档位**（切档与注入位置）、**清洗**（身份清洗与装配观测）、**对抗**（转写开关与自检）、**提示词**（当前生效稿与指纹）、**关于**（版本、内置词表规模、作者与仓库地址）。
 
 ---
 
@@ -264,6 +265,8 @@ $DSH_HOME/dsh-QingLanPierce/
 | `injectionOrder` | `-100` | 注入位置；`-999` 极限抢占，`100` 在 persona 之后。写 `-1000 ~ 1000` 以外的值会被拒（宿主段序有边界） |
 | `tier` / `promptId` | `standard` / `qinglan-core` | 两个键永远成对：只写 `tier` 会自动补对应的 `promptId`，只写 `promptId` 会反推 `tier`。面板、`/qinglan tier`、HTTP `action:"config"` 三条路都是这个口径 |
 | `escapeNotation` | `auto` | 指称记法模式：`auto` 按类别策略 · `plain` 原词直通（对照实验） · `topic` 一律类别词 · `index` 中文序数 · `gloss` / `raw` 旧形态，仅排障 |
+| `washMode` | `off` | 身份清洗强度：`off` 关闭 · `identity` 只擦官方身份/人设/后缀三段 · `full` 系统提示词只留破甲稿。切完下一条消息生效 |
+| `washDropContexts` | `true` | 仅 `full` 生效：清空可选运行时上下文（沙箱策略 / 审批策略 / 子智能体 delegation 协议）。`required: true` 的 `working-directory:current` 与 `subagent:identity` 由宿主补回，插件删不掉 |
 
 ### 预算声明（`budgetNote`）
 
@@ -288,12 +291,41 @@ $DSH_HOME/dsh-QingLanPierce/
 
 追加次数在菜单「对抗」页的「预算声明已追加」实时可见；`qinglan_control { "action": "status" }` 的 `budget` 字段给出 `enabled` / `appended` / `lastAt` / `text`。
 
+## 五之后 · 身份清洗（0.2.0 新增）
+
+官方的系统提示词由五类段拼成：身份（`harness:identity`，-1000）、人设前缀（`deployment:persona-prefix`，0）、各工具的用法指引（900–3100）、环境后缀（10000–10200）。「破甲」解决的是**说什么**，身份清洗解决的是**谁在说**。
+
+菜单「清洗」页给三档强度：
+
+| 模式 | 删掉什么 | 留下什么 |
+|---|---|---|
+| `off`（默认） | 不删 | 全部，破甲稿按注入位置插在官方段之间 |
+| `identity` | 官方身份、人设前缀、人设后缀三段 | 工具用法指引、交付段、环境后缀 |
+| `full` | 除破甲稿外全部 | 只有破甲稿 + 稿尾自带的 `prompts/wash-tools.md` 工具规范 |
+
+`full` 同时默认清空可选运行时上下文（沙箱策略、审批策略、子智能体 delegation 协议），开关在同一个页签里，随时可关。两条 `required: true` 的上下文——`working-directory:current` 与 `subagent:identity`（"You are a subagent delegated by agent …"）——由宿主在 `refreshContext()` 里按注册顺序补回，插件侧删不掉；状态页「宿主补回」一行会直接列出来。
+
+### 覆盖范围
+
+主会话、`subagent`、`subagent_fork`、workflow 节点、team 成员**一起接管**。理由不是猜的：所有 agent 的提示词都走同一个 `ctx.systemPrompt.assemble()`，事件按 scope 派发且无标签监听器全放行；子智能体在同一 cordis 上下文里创建，team 成员走 `ctx.subagents` 的 continuable 通道。插件挂一次，收到所有装配。
+
+「清洗」页的「已接管会话」是运行时证据：每出现一个新的 session id，计数就加一。主会话跑一轮、再派一个子智能体，数字应该从 1 变成 2。
+
+### 实现方式与边界
+
+清洗走 `system-prompt/assemble` 瀑布，**不用 `complete: true`**。原因很硬：`complete` 段全进程唯一，与任何别的 `complete` 相撞会让组装直接抛错、会话起不来；瀑布最坏是没清干净，不会让会话挂掉。
+
+- 插件关闭或稿件读取失败时**不清空**，否则模型会收到空系统提示词。
+- 工具 schema 不经过这里（由 provider 直接给），所以工具照常可调；`full` 模式下「怎么用」由 `prompts/wash-tools.md` 接管，删了这份文件状态页会报警。
+- `required: true` 的运行时上下文（`working-directory:current`、`subagent:identity`）会被宿主在请求接纳时补回，这属于宿主行为，插件侧删不掉。
+- 如有其它插件用 `complete` 段，它会在瀑布之后盖掉清洗结果——状态页「最近一次 N 段 → M 段」与预期不符即可发现。
+
 ## 五之后 · 验证（只在仓库里，不随包发布）
 
 仓库带一份回归验证脚本，用假 ctx 把插件真跑起来（不装 DSH 也能跑），全部断言都在里面：
 
 ```bash
-node scripts/verify.mjs          # 128 项断言，全绿退出码 0
+node scripts/verify.mjs          # 188 项断言，全绿退出码 0
 npm run check                    # 六个 js 的语法检查
 npm run e2e                      # 在隔离 DSH_HOME 里真跑 install/uninstall（Windows）
 ```
@@ -305,7 +337,7 @@ HTTP 三闸、档位映射、pre-step 的预算声明与续写轮、读盘策略
 `scripts/` 在仓库里但不在 `package.json` 的 `files` 里，安装脚本也显式跳过它；
 `.gitattributes` / `.gitignore` 仍在仓库里，同时也随包发布（沿用历史行为）；
 `assets/` 自 0.1.1 起随包发布 —— 解压后直接打开 README 就能看到主视觉，安装脚本仍跳过它。
-发布包共 24 个文件。
+发布包共 25 个文件。
 
 ## 六、常见问题
 

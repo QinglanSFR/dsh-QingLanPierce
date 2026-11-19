@@ -424,6 +424,9 @@ window.__ModuleLoader__.load({
       triggerEscape: true,
       triggerEscapeNote: false,
 
+      washMode: "off",
+      washDropContexts: true,
+
       promptId: "qinglan-core",
     };
 
@@ -820,6 +823,14 @@ window.__ModuleLoader__.load({
       { id: 100, name: "常规追加", desc: "最温和，跟随旧插件习惯" },
     ];
 
+    /* 身份清洗三档。full 是「系统提示词只留破甲稿」，官方工具指引段也被清掉，
+       所以稿尾必须自带工具规范（prompts/wash-tools.md）—— 界面上直接标出来。 */
+    var WASH_MODE_OPTIONS = [
+      { id: "off", name: "关闭", desc: "官方段与破甲段共存（现状）" },
+      { id: "identity", name: "擦身份", desc: "删官方身份/人设/后缀，工具指引保留" },
+      { id: "full", name: "全量替换", desc: "系统提示词只留破甲稿，工具用法由稿尾规范接管" },
+    ];
+
     function Row(props) {
       return h(
         "div",
@@ -1195,6 +1206,79 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function WashTab(props) {
+      var status = props.status || null;
+      var cfg = props.cfg || {};
+      var applyCfg = props.apply || function (patch) { apiCall("config", { patch: patch }); };
+      var mode = cfg.washMode || "off";
+      var wash = status && status.wash ? status.wash : null;
+      var modeLabel = (WASH_MODE_OPTIONS.filter(function (item) { return item.id === mode; })[0] || {}).name || mode;
+      return h(
+        "div",
+        null,
+        h(
+          "div",
+          { className: "ql-sec" },
+          h("h4", null, "身份清洗"),
+          h(
+            "div",
+            { className: "ql-grid" },
+            WASH_MODE_OPTIONS.map(function (item) {
+              return h(
+                "button",
+                {
+                  key: item.id,
+                  className: "ql-card" + (mode === item.id ? " on" : ""),
+                  onClick: function () { applyCfg({ washMode: item.id }); },
+                },
+                h("b", null, item.name),
+                h("span", null, item.desc),
+              );
+            }),
+          ),
+          h(Row, { k: "当前模式", v: modeLabel }),
+          h("div", { className: "ql-mute" }, "切完下一条消息生效；主会话、子智能体、团队成员一起接管。"),
+        ),
+        h(
+          "div",
+          { className: "ql-sec" },
+          h("h4", null, "运行时上下文"),
+          h(Toggle, {
+            checked: cfg.washDropContexts !== false,
+            label: "全量模式下清空上下文快照",
+            hint: "沙箱策略 / 审批策略 / delegation 协议",
+            onChange: function (next) { applyCfg({ washDropContexts: !!next }); },
+          }),
+          h("div", { className: "ql-mute" }, "只影响「全量替换」；required 的 cwd 与子智能体身份由宿主补回，见下表。"),
+        ),
+        h(
+          "div",
+          { className: "ql-sec" },
+          h("h4", null, "装配观测"),
+          h(Row, { k: "已接管会话", v: wash ? String(wash.sessions) : "—" }),
+          h(Row, { k: "有效 / 空转", v: wash ? wash.washed + " / " + wash.skipped : "—" }),
+          h(Row, { k: "清洗轮次", v: wash ? String(wash.assemblies) : "—" }),
+          h(Row, { k: "最近一次", v: wash && wash.lastBefore ? wash.lastBefore + " 段 → " + wash.lastAfter + " 段" : "尚无" }),
+          h(Row, { k: "保留段", v: wash && wash.kept && wash.kept.length ? wash.kept.join(", ") : "—" }),
+          h(Row, { k: "删除段", v: wash && wash.dropped && wash.dropped.length ? wash.dropped.join(", ") + (wash.droppedTotal > wash.dropped.length ? " …（共 " + wash.droppedTotal + " 段）" : "") : "—" }),
+          h(Row, { k: "宿主补回", v: wash && wash.requiredBack ? wash.requiredBack.join(", ") : "—" }),
+          h(Row, {
+            k: "工具规范",
+            v: wash && wash.toolsDoc
+              ? "已随稿注入"
+              : mode === "full"
+                ? "缺失（prompts/wash-tools.md）"
+                : "由官方段提供",
+          }),
+        ),
+        h(
+          "div",
+          { className: "ql-ops" },
+          h("button", { className: "ql-btn primary", onClick: function () { props.onRefresh && props.onRefresh(); } }, "刷新宿主状态"),
+        ),
+      );
+    }
+
     var REPO_URL = "https://github.com/QinglanSFR/dsh-QingLanPierce";
     var AUTHOR_URL = "https://github.com/QinglanSFR";
 
@@ -1237,6 +1321,7 @@ window.__ModuleLoader__.load({
     var TABS = [
       { id: "status", label: "状态" },
       { id: "tier", label: "档位" },
+      { id: "wash", label: "清洗" },
       { id: "switch", label: "对抗" },
       { id: "prompt", label: "提示词" },
       { id: "about", label: "关于" },
@@ -1390,6 +1475,7 @@ window.__ModuleLoader__.load({
           onRefresh: function () { cfgBus.refresh(0); },
         });
       } else if (ui.tab === "tier") body = h(TierTab, { status: status, active: ui.open, cfg: effectiveCfg, apply: cfgBus.apply });
+      else if (ui.tab === "wash") body = h(WashTab, { status: status, cfg: effectiveCfg, active: ui.open, apply: cfgBus.apply, onRefresh: function () { cfgBus.refresh(0); } });
       else if (ui.tab === "switch") body = h(SwitchTab, { status: status, cfg: effectiveCfg, cfgState: cfgState, active: ui.open, apply: cfgBus.apply });
       else if (ui.tab === "prompt") body = h(PromptTab, { status: status, cfg: effectiveCfg, active: ui.open });
       else body = h(AboutTab, { status: status, active: ui.open });
